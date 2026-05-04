@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Helix Descent</title>
+  </head>
+  <body>
+    <div id="ui">
+      <div id="score">0</div>
+      <div id="hint">Drag to rotate, release to shoot</div>
+    </div>
+    <div id="ammo-ui" aria-label="Ammo">
+      <div class="ammo-label">AMMO</div>
+      <div id="ammo-magazine"></div>
+    </div>
+    <button id="pause-button" type="button" aria-label="Open options">Options</button>
+    <div id="pause-panel" hidden>
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2>Paused</h2>
+          <span>Press P to resume</span>
+        </div>
+        <label>
+          Shooting impulse
+          <input id="impulse-input" type="number" min="0" max="12" step="0.1" />
+        </label>
+        <label>
+          Time between bullets
+          <input id="fire-interval-input" type="number" min="0.08" max="1.5" step="0.05" />
+        </label>
+        <label>
+          Total bullet count
+          <input id="max-ammo-input" type="number" min="1" max="12" step="1" />
+        </label>
+      </div>
+    </div>
+    <div id="game-over" hidden>
+      <h1>Game Over</h1>
+      <p id="final-score">0</p>
+      <p id="restart-hint">Click or tap to restart</p>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
