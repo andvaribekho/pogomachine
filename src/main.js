@@ -772,12 +772,17 @@ function positionEnemy(enemy) {
       segment.rotation.y = -segmentAngle + Math.PI / 2;
       segment.rotation.z = Math.PI / 2;
     }
-    _enemyProjectedPosition.set(
-      ball.position.x,
-      enemy.y + world.position.y,
-      ball.position.z
-    );
-    enemy.collisionPosition.copy(_enemyProjectedPosition);
+
+    const worldAngle = enemy.localAngle + world.rotation.y;
+    _pillarWormNormal.set(Math.cos(worldAngle), 0, Math.sin(worldAngle));
+    const ballLaneRadius = getBulletLaneRadius();
+    const ballRadialLength = Math.hypot(ball.position.x, ball.position.z) || 1;
+    _ballRadialNormal.set(ball.position.x / ballRadialLength, 0, ball.position.z / ballRadialLength);
+    enemy.interactable = _pillarWormNormal.dot(_ballRadialNormal) > 0.15;
+    if (enemy.interactable) {
+      enemy.collisionPosition.copy(_pillarWormNormal).multiplyScalar(ballLaneRadius);
+      enemy.collisionPosition.y = enemy.y + world.position.y;
+    }
     return;
   }
 
@@ -898,7 +903,7 @@ function createWorm(platformData, id, tile) {
 
 function createPillarWorm(y, id) {
   const worm = createWormMesh();
-  worm.group.scale.setScalar(0.7);
+  worm.group.scale.setScalar(0.84);
   const laneAngle = ((getBulletLaneAngle() - world.rotation.y + 0.18) % twoPi + twoPi) % twoPi;
   const enemy = {
     type: 'pillarWorm',
@@ -909,13 +914,14 @@ function createPillarWorm(y, id) {
     localAngle: laneAngle,
     angle: laneAngle,
     direction: Math.random() < 0.5 ? 1 : -1,
-    visualRadius: pillarRadius + 0.26,
+    visualRadius: pillarRadius + 0.34,
     segmentArc: 0.19,
     speed: 0.28 + Math.random() * 0.22,
     collisionRadius: 0.34,
     hp: 3,
     flashTimer: 0,
     collisionPosition: new THREE.Vector3(),
+    interactable: false,
   };
   positionEnemy(enemy);
   world.add(enemy.group);
@@ -1488,6 +1494,7 @@ function getBallColliderPositions() {
 function getBallEnemyContact(enemy) {
   const colliders = getBallColliderPositions();
   if (enemy.type === 'pillarWorm') {
+    if (!enemy.interactable) return null;
     const stompRadius = enemy.collisionRadius + ballRadius * 0.8;
     const contactRadius = enemy.collisionRadius + ballRadius * 0.48;
     if (colliders.bottom.distanceToSquared(enemy.collisionPosition) <= stompRadius * stompRadius) return 'bottom';
@@ -1568,6 +1575,7 @@ function checkBulletEnemyHit(bullet) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
     const hitRadius = enemy.collisionRadius + 0.12;
+    if (enemy.type === 'pillarWorm' && !enemy.interactable) continue;
     const collisionPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
     if (bullet.mesh.position.distanceToSquared(collisionPosition) <= hitRadius * hitRadius) {
       if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
@@ -2092,6 +2100,8 @@ const _cannonLosPoint = new THREE.Vector3();
 const _cannonWorldPosition = new THREE.Vector3();
 const _shotgunTangent = new THREE.Vector3();
 const _shotgunVelocity = new THREE.Vector3();
+const _pillarWormNormal = new THREE.Vector3();
+const _ballRadialNormal = new THREE.Vector3();
 
 const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
 const debugMarker = collisionDebugEnabled
