@@ -15,6 +15,8 @@ renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scoreEl = document.querySelector('#score');
+const heartsEl = document.querySelector('#hearts');
+const coinsEl = document.querySelector('#coins');
 const levelLabelEl = document.querySelector('#level-label');
 const progressFillEl = document.querySelector('#progress-fill');
 const progressLabelEl = document.querySelector('#progress-label');
@@ -27,6 +29,14 @@ const closePanelButton = document.querySelector('#close-panel-button');
 const impulseInput = document.querySelector('#impulse-input');
 const fireIntervalInput = document.querySelector('#fire-interval-input');
 const maxAmmoInput = document.querySelector('#max-ammo-input');
+const levelCompleteEl = document.querySelector('#level-complete');
+const completeSummaryEl = document.querySelector('#complete-summary');
+const rewardHpButton = document.querySelector('#reward-hp');
+const rewardAmmoButton = document.querySelector('#reward-ammo');
+const buyInvulnerabilityButton = document.querySelector('#buy-invulnerability');
+const buyShieldButton = document.querySelector('#buy-shield');
+const shopStatusEl = document.querySelector('#shop-status');
+const nextLevelButton = document.querySelector('#next-level-button');
 
 const world = new THREE.Group();
 scene.add(world);
@@ -35,6 +45,7 @@ const colors = {
   blue: 0x2196f3,
   blueFlash: 0x90caf9,
   crack: 0x0d47a1,
+  finish: 0x2ecc71,
   red: 0xf44336,
   pillar: 0x243447,
   ball: 0xffd54f,
@@ -44,19 +55,23 @@ const colors = {
   spike: 0x6d4c41,
   particle: 0xffe082,
   blueParticle: 0x64b5f6,
+  crate: 0x9c6b30,
+  worm: 0x8bc34a,
 };
 
 const platformInnerRadius = 0.95;
 const platformOuterRadius = 3.15;
 const platformThickness = 0.22;
 const platformSpacing = 6.45;
-const platformCount = 15;
 const ballRadius = 0.32;
 const twoPi = Math.PI * 2;
 const collisionDebugEnabled = new URLSearchParams(window.location.search).has('debug');
 const defaultMaxAmmo = 5;
 const defaultFireInterval = 0.3;
 const defaultBulletImpulse = 4.3;
+const maxHp = 3;
+const invulnerabilityCost = 20;
+const shieldCost = 20;
 const bulletSpeed = 22;
 const bulletLifetime = 1.05;
 const baseShotUpwardVelocityCap = 2.4;
@@ -66,10 +81,21 @@ let ballVelocity = 0;
 let gravity = -14;
 let bounceVelocity = 7.7;
 let score = 0;
+let currentLevel = 1;
+let platformsPassedThisLevel = 0;
 let nextPlatformId = 0;
-let lowestPlatformY = 0;
 let isGameOver = false;
 let isPaused = false;
+let isLevelComplete = false;
+let hp = maxHp;
+let coins = 0;
+let damageCooldown = 0;
+let damageFlashTimer = 0;
+let pendingInvulnerability = false;
+let pendingShield = false;
+let invulnerabilityTimer = 0;
+let hasShield = false;
+let rewardChosen = false;
 let maxAmmo = defaultMaxAmmo;
 let fireInterval = defaultFireInterval;
 let bulletImpulse = defaultBulletImpulse;
@@ -82,6 +108,8 @@ const bullets = [];
 const enemies = [];
 const particles = [];
 const floatingTexts = [];
+const crates = [];
+const coinPickups = [];
 
 let shakeIntensity = 0;
 let shakeDecay = 0;
@@ -112,9 +140,25 @@ const batWingGeometry = new THREE.BoxGeometry(0.46, 0.045, 0.2);
 const spikeBodyGeometry = new THREE.SphereGeometry(0.28, 20, 14);
 const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
 const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
+const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
+const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
+const coinPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xb8860b, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.7 });
+const shieldGeometry = new THREE.BoxGeometry(0.42, 0.14, 0.42);
 const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roughness: 0.62 });
 const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
 const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
+const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
+const wormSegmentGeometry = new THREE.SphereGeometry(0.16, 12, 8);
+const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.1 });
+const wormHeadGeometry = new THREE.SphereGeometry(0.2, 12, 8);
+const shieldMaterial = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x00bcd4, emissiveIntensity: 0.35 });
+const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x37474f, roughness: 0.65, metalness: 0.2 });
+const wallHeight = 3.0;
+const wallRadialWidth = 0.18;
+
+const shieldMesh = new THREE.Mesh(shieldGeometry, shieldMaterial);
+shieldMesh.visible = false;
+scene.add(shieldMesh);
 
 let ammoSegments = [];
 
@@ -131,6 +175,7 @@ const drag = {
 };
 
 let audioCtx = null;
+let invulnerabilityAudio = null;
 
 function ensureAudioCtx() {
   if (!audioCtx) {
@@ -276,6 +321,82 @@ function playBatDeathSound() {
   }
 }
 
+function playRewardSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.setValueAtTime(780, now + 0.06);
+    osc.frequency.setValueAtTime(1040, now + 0.13);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playGlassBreakSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1350, now);
+    osc.frequency.exponentialRampToValueAtTime(420, now + 0.18);
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function startInvulnerabilityMusic() {
+  try {
+    if (invulnerabilityAudio) return;
+    const ctx = ensureAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(660, ctx.currentTime);
+    gain.gain.setValueAtTime(0.045, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    invulnerabilityAudio = { osc, gain, nextChange: 0, note: 0 };
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function updateInvulnerabilityMusic() {
+  if (!invulnerabilityAudio || !audioCtx) return;
+  const notes = [660, 880, 990, 1320];
+  if (audioCtx.currentTime >= invulnerabilityAudio.nextChange) {
+    invulnerabilityAudio.osc.frequency.setValueAtTime(notes[invulnerabilityAudio.note % notes.length], audioCtx.currentTime);
+    invulnerabilityAudio.note += 1;
+    invulnerabilityAudio.nextChange = audioCtx.currentTime + 0.16;
+  }
+}
+
+function stopInvulnerabilityMusic() {
+  if (!invulnerabilityAudio || !audioCtx) return;
+  invulnerabilityAudio.gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+  invulnerabilityAudio.osc.stop(audioCtx.currentTime + 0.14);
+  invulnerabilityAudio = null;
+}
+
 function makeArcGeometry(innerRadius, outerRadius, startAngle, endAngle, depth) {
   const positions = [];
   const indices = [];
@@ -364,15 +485,16 @@ function makeCrackLine(startAngle, endAngle) {
   );
 }
 
-function createPlatform(y, id) {
+function createPlatform(y, id, options = {}) {
   const group = new THREE.Group();
   group.position.y = y;
 
+  const isFinal = options.final === true;
   const difficulty = Math.min(id / 18, 1);
-  const segmentCount = Math.floor(8 + difficulty * 5);
-  const gapCount = Math.min(4, 2 + Math.floor(difficulty * 3));
-  const redChance = 0.08 + difficulty * 0.17;
-  const crackedChance = 0.1 + difficulty * 0.08;
+  const segmentCount = isFinal ? 16 : Math.floor(8 + difficulty * 5);
+  const gapCount = isFinal ? 0 : Math.min(4, 2 + Math.floor(difficulty * 3));
+  const redChance = isFinal ? 0 : 0.08 + difficulty * 0.17;
+  const crackedChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
   const arcSize = twoPi / segmentCount;
   const tiles = [];
 
@@ -386,23 +508,93 @@ function createPlatform(y, id) {
 
     const start = i * arcSize;
     const end = (i + 1) * arcSize;
-    let type = Math.random() < redChance && id > 1 ? 'red' : 'blue';
+    let type = isFinal ? 'finish' : Math.random() < redChance && id > 1 ? 'red' : 'blue';
     if (type === 'blue' && Math.random() < crackedChance && id > 2) {
       type = 'crackedBlue';
     }
     const geometry = makeArcGeometry(platformInnerRadius, platformOuterRadius, start, end, platformThickness);
-    const material = new THREE.MeshStandardMaterial({ color: type === 'red' ? colors.red : colors.blue, roughness: 0.6, side: THREE.DoubleSide });
+    const tileColor = type === 'red' ? colors.red : type === 'finish' ? colors.finish : colors.blue;
+    const material = new THREE.MeshStandardMaterial({ color: tileColor, roughness: 0.6, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
     const crackLine = type === 'crackedBlue' ? makeCrackLine(start, end) : null;
     mesh.receiveShadow = true;
     group.add(mesh);
     if (crackLine) group.add(crackLine);
-    tiles.push({ index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false });
+    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false };
+    tiles.push(tile);
+  }
+
+  if (!isFinal && Math.random() < 0.11) {
+    const blueTiles = tiles.filter(t => t.type === 'blue' && !t.broken);
+    if (blueTiles.length > 0) {
+      const ballAngleTarget = 0;
+      let bestTile = blueTiles[0];
+      let bestDist = Infinity;
+      for (const bt of blueTiles) {
+        const tileAngle = ((bt.start + bt.end) / 2 + twoPi) % twoPi;
+        let dist = Math.abs(tileAngle - ballAngleTarget);
+        if (dist > Math.PI) dist = twoPi - dist;
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestTile = bt;
+        }
+      }
+      const crateAngle = (bestTile.start + bestTile.end) / 2;
+      createCrate(group, crateAngle, platformOuterRadius - 0.8);
+    }
   }
 
   world.add(group);
-  platforms.push({ id, group, tiles, scored: false });
-  maybeSpawnEnemiesForSection(y, id);
+  const platData = { id, group, tiles, scored: false, final: isFinal, wallAngle: null, wallLastSide: 0 };
+  platforms.push(platData);
+
+  if (!isFinal && id > 2 && Math.random() < 0.3) {
+    const blueTiles = tiles.filter(t => t.type === 'blue' && !t.broken);
+    if (blueTiles.length > 0) {
+      const playerAngle = ((-world.rotation.y) % twoPi + twoPi) % twoPi;
+      let bestTile = blueTiles[0];
+      let bestDist = Infinity;
+      for (const bt of blueTiles) {
+        const tileAngle = ((bt.start + bt.end) / 2 + twoPi) % twoPi;
+        let dist = Math.abs(tileAngle - playerAngle);
+        if (dist > Math.PI) dist = twoPi - dist;
+        if (dist < bestDist && dist > 0.3) {
+          bestDist = dist;
+          bestTile = bt;
+        }
+      }
+      const wallAng = ((bestTile.start + bestTile.end) / 2 + twoPi) % twoPi;
+      platData.wallAngle = wallAng;
+
+      const wallGroup = new THREE.Group();
+      wallGroup.position.y = platformThickness / 2 + wallHeight / 2;
+      wallGroup.rotation.y = wallAng;
+      const wallLength = platformOuterRadius - platformInnerRadius + 0.1;
+      const wallCenterR = (platformInnerRadius + platformOuterRadius) / 2;
+      const wallMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(wallRadialWidth, wallHeight, wallLength),
+        wallMaterial
+      );
+      wallMesh.position.set(0, 0, wallCenterR);
+      wallMesh.castShadow = true;
+      wallGroup.add(wallMesh);
+      group.add(wallGroup);
+    }
+  }
+
+  if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
+}
+
+function createCrate(platformGroup, angle, radius) {
+  const mesh = new THREE.Mesh(crateGeometry.clone(), crateMaterial.clone());
+  mesh.position.set(
+    Math.cos(angle) * radius,
+    platformThickness / 2 + 0.22,
+    Math.sin(angle) * radius
+  );
+  mesh.rotation.y = angle;
+  platformGroup.add(mesh);
+  crates.push({ mesh, platformGroup, value: 5, broken: false });
 }
 
 function createBatMesh() {
@@ -460,6 +652,9 @@ function positionEnemy(enemy) {
 
 function createBat(y, id) {
   const bat = createBatMesh();
+  const arcSpan = 1.8 + Math.random() * 0.6;
+  const arcCenter = drag.targetRotation + Math.PI / 2;
+  const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
   const enemy = {
     type: 'bat',
     id,
@@ -467,9 +662,12 @@ function createBat(y, id) {
     leftWing: bat.leftWing,
     rightWing: bat.rightWing,
     y,
-    angle: Math.random() * twoPi,
-    orbitRadius: 1.65 + Math.random() * 1.15,
-    speed: (0.55 + Math.random() * 0.75) * (Math.random() < 0.5 ? -1 : 1),
+    angle,
+    arcCenter,
+    arcSpan,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: platformOuterRadius - 0.8 + (Math.random() - 0.5) * 0.4,
+    speed: 0.55 + Math.random() * 0.75,
     collisionRadius: 0.35,
     flapOffset: Math.random() * twoPi,
   };
@@ -480,15 +678,21 @@ function createBat(y, id) {
 
 function createSpikedBall(y, id) {
   const spike = createSpikedBallMesh();
+  const arcSpan = 1.5 + Math.random() * 0.5;
+  const arcCenter = drag.targetRotation + Math.PI / 2;
+  const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
   const enemy = {
     type: 'spike',
     id,
     group: spike.group,
     material: spike.material,
     y,
-    angle: Math.random() * twoPi,
-    orbitRadius: 1.75 + Math.random() * 1.05,
-    speed: (0.2 + Math.random() * 0.35) * (Math.random() < 0.5 ? -1 : 1),
+    angle,
+    arcCenter,
+    arcSpan,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: platformOuterRadius - 0.8 + (Math.random() - 0.5) * 0.4,
+    speed: 0.2 + Math.random() * 0.35,
     collisionRadius: 0.43,
     hp: 3,
     flashTimer: 0,
@@ -498,13 +702,69 @@ function createSpikedBall(y, id) {
   enemies.push(enemy);
 }
 
-function maybeSpawnEnemiesForSection(platformYValue, id) {
+function createWormMesh() {
+  const group = new THREE.Group();
+  const segments = [];
+  for (let i = 0; i < 4; i += 1) {
+    const geo = i === 0 ? wormHeadGeometry : wormSegmentGeometry;
+    const mesh = new THREE.Mesh(geo, wormMaterial.clone());
+    mesh.position.x = -i * 0.28;
+    mesh.position.y = 0.16;
+    mesh.scale.y = 0.7;
+    group.add(mesh);
+    segments.push(mesh);
+  }
+  return { group, segments };
+}
+
+function createWorm(platformData, id) {
+  const worm = createWormMesh();
+  const radius = platformOuterRadius - 0.8;
+  const startAngle = 0;
+  const enemy = {
+    type: 'worm',
+    id,
+    group: worm.group,
+    segments: worm.segments,
+    platformData,
+    y: platformData.group.position.y + platformThickness / 2 + 0.01,
+    angle: startAngle,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    speed: 0.6 + Math.random() * 0.5,
+    collisionRadius: 0.3,
+    radius,
+  };
+  enemy.group.position.set(
+    Math.cos(startAngle) * radius,
+    enemy.y,
+    Math.sin(startAngle) * radius
+  );
+  enemy.group.rotation.y = -startAngle + Math.PI / 2;
+  scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
+function isWormOnValidTile(enemy) {
+  const localAngle = ((-world.rotation.y - enemy.angle) % twoPi + twoPi) % twoPi;
+  for (const tile of enemy.platformData.tiles) {
+    if (tile.broken) continue;
+    if (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue' || tile.type === 'finish') {
+      if (angleInArc(localAngle, tile.start, tile.end)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function maybeSpawnEnemiesForSection(platformData, id) {
   if (id < 5) return;
 
   const difficulty = Math.min(id / 24, 1);
-  const sectionY = platformYValue + platformSpacing * (0.38 + Math.random() * 0.22);
+  const sectionY = platformData.group.position.y + platformSpacing * (0.38 + Math.random() * 0.22);
   const batChance = Math.min(0.08 + difficulty * 0.38, 0.55);
   const spikeChance = id > 10 ? Math.min((difficulty - 0.35) * 0.28, 0.22) : 0;
+  const wormChance = id > 6 ? Math.min(0.15 + difficulty * 0.25, 0.4) : 0;
 
   if (Math.random() < batChance) {
     createBat(sectionY, id);
@@ -512,6 +772,10 @@ function maybeSpawnEnemiesForSection(platformYValue, id) {
 
   if (Math.random() < spikeChance) {
     createSpikedBall(sectionY - 0.9 + Math.random() * 1.8, id);
+  }
+
+  if (Math.random() < wormChance) {
+    createWorm(platformData, id);
   }
 }
 
@@ -558,19 +822,63 @@ function syncOptionsPanel() {
   maxAmmoInput.value = String(maxAmmo);
 }
 
+function getLevelTarget(level = currentLevel) {
+  return level * 10 + 10;
+}
+
 function getLevelInfo() {
-  const level = score < 20 ? 1 : Math.floor((score - 20) / 10) + 2;
-  const start = level === 1 ? 0 : 20 + (level - 2) * 10;
-  const target = level === 1 ? 20 : 20 + (level - 1) * 10;
-  const progress = THREE.MathUtils.clamp((score - start) / (target - start), 0, 1);
-  return { level, start, target, progress };
+  const target = getLevelTarget();
+  const progress = THREE.MathUtils.clamp(platformsPassedThisLevel / target, 0, 1);
+  return { level: currentLevel, target, progress };
 }
 
 function updateLevelUI() {
   const levelInfo = getLevelInfo();
   levelLabelEl.textContent = `Level ${levelInfo.level}`;
-  progressLabelEl.textContent = `${score} / ${levelInfo.target}`;
+  progressLabelEl.textContent = `${platformsPassedThisLevel} / ${levelInfo.target}`;
   progressFillEl.style.width = `${levelInfo.progress * 100}%`;
+}
+
+function updateHeartsUI() {
+  heartsEl.textContent = `${'♥'.repeat(hp)}${'♡'.repeat(maxHp - hp)}`;
+}
+
+function updateCoinsUI() {
+  coinsEl.textContent = `${coins} coins`;
+}
+
+function worldToScreen(position) {
+  const projected = position.clone().project(camera);
+  return {
+    x: (projected.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-projected.y * 0.5 + 0.5) * window.innerHeight,
+  };
+}
+
+function spawnCoinPickupAnimation(worldPosition) {
+  const start = worldToScreen(worldPosition);
+  const targetRect = coinsEl.getBoundingClientRect();
+  const coin = document.createElement('div');
+  coin.className = 'coin-pickup';
+  coin.textContent = '+5';
+  coin.style.left = `${start.x}px`;
+  coin.style.top = `${start.y}px`;
+  document.body.appendChild(coin);
+
+  requestAnimationFrame(() => {
+    coin.style.left = `${targetRect.left + targetRect.width / 2}px`;
+    coin.style.top = `${targetRect.top + targetRect.height / 2}px`;
+    coin.style.opacity = '0';
+    coin.style.transform = 'translate(-50%, -50%) scale(0.45)';
+  });
+
+  window.setTimeout(() => coin.remove(), 720);
+}
+
+function updatePersistentUI() {
+  updateHeartsUI();
+  updateCoinsUI();
+  updateLevelUI();
 }
 
 function setPaused(paused) {
@@ -579,7 +887,10 @@ function setPaused(paused) {
   if (paused) {
     drag.active = false;
     stopShooting();
+    stopInvulnerabilityMusic();
     syncOptionsPanel();
+  } else if (invulnerabilityTimer > 0) {
+    startInvulnerabilityMusic();
   }
 }
 
@@ -653,6 +964,12 @@ function updateBullets(dt) {
       continue;
     }
 
+    if (checkBulletCrateHit(bullet, previousY)) {
+      scene.remove(bullet.mesh);
+      bullets.splice(i, 1);
+      continue;
+    }
+
     if (checkBulletPlatformHit(bullet, previousY)) {
       scene.remove(bullet.mesh);
       bullets.splice(i, 1);
@@ -705,6 +1022,72 @@ function spawnBulletImpact(position) {
   }
 }
 
+function breakCrate(crateIndex, byBullet = false) {
+  const crate = crates[crateIndex];
+  if (!crate || crate.broken) return false;
+
+  crate.broken = true;
+  crate.mesh.getWorldPosition(_crateWorldPosition);
+  spawnExplosion(_crateWorldPosition, colors.crate, 12);
+  crate.platformGroup.remove(crate.mesh);
+  crate.mesh.geometry.dispose();
+  crate.mesh.material.dispose();
+  crates.splice(crateIndex, 1);
+
+  if (byBullet) {
+    spawnCoinPickup(_crateWorldPosition);
+  } else {
+    coins += 5;
+    updateCoinsUI();
+    spawnCoinPickupAnimation(_crateWorldPosition);
+  }
+  return true;
+}
+
+function spawnCoinPickup(worldPos) {
+  const localPos = worldPos.clone();
+  world.worldToLocal(localPos);
+  const mesh = new THREE.Mesh(coinPickupGeometry, coinPickupMaterial);
+  mesh.position.copy(localPos);
+  mesh.position.y += 0.1;
+  world.add(mesh);
+  coinPickups.push({ mesh, value: 5, collected: false });
+}
+
+function updateCoinPickups(dt) {
+  const ballLocal = ball.position.clone();
+  world.worldToLocal(ballLocal);
+  for (let i = coinPickups.length - 1; i >= 0; i -= 1) {
+    const pickup = coinPickups[i];
+    if (pickup.collected) continue;
+    pickup.mesh.rotation.y += dt * 3;
+    pickup.mesh.position.y += Math.sin(performance.now() * 0.004 + i) * 0.002;
+
+    const dx = ballLocal.x - pickup.mesh.position.x;
+    const dy = ballLocal.y - pickup.mesh.position.y;
+    const dz = ballLocal.z - pickup.mesh.position.z;
+    if (dx * dx + dy * dy + dz * dz <= (ballRadius + 0.25) * (ballRadius + 0.25)) {
+      pickup.collected = true;
+      coins += pickup.value;
+      updateCoinsUI();
+      const worldPos = pickup.mesh.position.clone();
+      world.localToWorld(worldPos);
+      spawnCoinPickupAnimation(worldPos);
+      world.remove(pickup.mesh);
+      pickup.mesh.geometry.dispose();
+      coinPickups.splice(i, 1);
+    }
+  }
+}
+
+function clearCoinPickups() {
+  while (coinPickups.length) {
+    const pickup = coinPickups.pop();
+    world.remove(pickup.mesh);
+    pickup.mesh.geometry.dispose();
+  }
+}
+
 function disposeTile(tile) {
   if (tile.mesh.parent) tile.mesh.parent.remove(tile.mesh);
   tile.mesh.geometry.dispose();
@@ -731,6 +1114,7 @@ function breakCrackedTile(platform, tile) {
 
   tile.broken = true;
   disposeTile(tile);
+  playGlassBreakSound();
   spawnExplosion(breakPosition, colors.blueParticle, 18);
 }
 
@@ -744,7 +1128,7 @@ function removeEnemyAt(index, explosionColor) {
 
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
-  if (enemy.type === 'bat') {
+  if (enemy.type === 'bat' || enemy.type === 'worm') {
     playBatDeathSound();
     removeEnemyAt(enemyIndex, colors.particle);
     return;
@@ -757,6 +1141,45 @@ function damageEnemy(enemyIndex) {
 
   if (enemy.hp <= 0) {
     removeEnemyAt(enemyIndex, colors.red);
+  }
+}
+
+function checkBulletCrateHit(bullet, previousY) {
+  for (let i = crates.length - 1; i >= 0; i -= 1) {
+    const crate = crates[i];
+    if (crate.broken) continue;
+    crate.mesh.getWorldPosition(_crateWorldPosition);
+    const crossedCrateY = previousY >= _crateWorldPosition.y && bullet.mesh.position.y <= _crateWorldPosition.y;
+    const horizontalDistance = Math.hypot(
+      bullet.mesh.position.x - _crateWorldPosition.x,
+      bullet.mesh.position.z - _crateWorldPosition.z
+    );
+    if (crossedCrateY && horizontalDistance <= 0.3) {
+      return breakCrate(i, true);
+    }
+  }
+  return false;
+}
+
+function checkBallCrateHit(previousY) {
+  const bottomBefore = previousY - ballRadius;
+  const bottomNow = ball.position.y - ballRadius;
+
+  for (let i = crates.length - 1; i >= 0; i -= 1) {
+    const crate = crates[i];
+    if (crate.broken) continue;
+    crate.mesh.getWorldPosition(_crateWorldPosition);
+    const crateTop = _crateWorldPosition.y + 0.17;
+    const crossedCrateTop = bottomBefore >= crateTop && bottomNow <= crateTop;
+    const horizontalDistance = Math.hypot(
+      ball.position.x - _crateWorldPosition.x,
+      ball.position.z - _crateWorldPosition.z
+    );
+
+    if (crossedCrateTop && horizontalDistance <= ballRadius + 0.22) {
+      breakCrate(i);
+      return;
+    }
   }
 }
 
@@ -775,7 +1198,16 @@ function checkBulletEnemyHit(bullet) {
 function updateEnemies(dt) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
-    enemy.angle += enemy.speed * dt;
+    const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
+    const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
+    enemy.angle += enemy.speed * enemy.direction * dt;
+    if (enemy.angle >= arcMax) {
+      enemy.angle = arcMax;
+      enemy.direction = -1;
+    } else if (enemy.angle <= arcMin) {
+      enemy.angle = arcMin;
+      enemy.direction = 1;
+    }
     positionEnemy(enemy);
 
     if (enemy.type === 'bat') {
@@ -794,9 +1226,7 @@ function updateEnemies(dt) {
 
     const playerHitRadius = enemy.collisionRadius + ballRadius * 0.78;
     if (ball.position.distanceToSquared(enemy.group.position) <= playerHitRadius * playerHitRadius) {
-      playFailSound();
-      triggerShake(0.65);
-      endGame();
+      applyDamage();
       return;
     }
 
@@ -886,9 +1316,11 @@ function clearEnemiesAndParticles() {
   }
 }
 
-function resetGame() {
+function clearTower() {
   clearBullets();
   clearEnemiesAndParticles();
+  clearCoinPickups();
+  crates.length = 0;
 
   while (platforms.length) {
     const platform = platforms.pop();
@@ -898,36 +1330,63 @@ function resetGame() {
       if (child.material) child.material.dispose();
     });
   }
+}
+
+function startLevel() {
+  clearTower();
 
   ball.position.set(0, ballStartY, platformOuterRadius - 0.8);
   ballVelocity = 0;
-  score = 0;
+  platformsPassedThisLevel = 0;
   nextPlatformId = 0;
-  lowestPlatformY = 0;
   gravity = -14;
   bounceVelocity = 7.7;
   world.rotation.y = 0;
   drag.targetRotation = 0;
   isGameOver = false;
-  setPaused(false);
+  isLevelComplete = false;
+  levelCompleteEl.hidden = true;
+  pausePanelEl.hidden = true;
+  isPaused = false;
   stopShooting();
   reloadAmmo();
+  damageCooldown = 0;
+  damageFlashTimer = 0;
   shakeIntensity = 0;
   shakeDecay = 0;
-  scoreEl.textContent = '0';
+  invulnerabilityTimer = 0;
+  scoreEl.textContent = String(score);
   updateLevelUI();
   gameOverEl.hidden = true;
+  ball.material.color.setHex(colors.ball);
+  stopInvulnerabilityMusic();
+  activatePendingPowerups();
 
-  for (let i = 0; i < platformCount; i += 1) {
-    createPlatform(-i * platformSpacing, nextPlatformId);
-    lowestPlatformY = -i * platformSpacing;
+  const target = getLevelTarget();
+  for (let i = 0; i <= target; i += 1) {
+    createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
     nextPlatformId += 1;
   }
+}
+
+function resetGame() {
+  score = 0;
+  currentLevel = 1;
+  hp = maxHp;
+  coins = 0;
+  pendingInvulnerability = false;
+  pendingShield = false;
+  invulnerabilityTimer = 0;
+  hasShield = false;
+  shieldMesh.visible = false;
+  updatePersistentUI();
+  startLevel();
 }
 
 function endGame() {
   isGameOver = true;
   stopShooting();
+  stopInvulnerabilityMusic();
   finalScoreEl.textContent = String(score);
   gameOverEl.hidden = false;
 }
@@ -937,10 +1396,104 @@ function triggerShake(intensity) {
   shakeDecay = 12;
 }
 
+function applyDamage() {
+  if (damageCooldown > 0 || isGameOver || isLevelComplete) return;
+  if (invulnerabilityTimer > 0) {
+    spawnFloatingText('NO HIT', ball.position);
+    damageCooldown = 0.45;
+    return;
+  }
+  if (hasShield) {
+    hasShield = false;
+    shieldMesh.visible = false;
+    spawnFloatingText('SHIELD', ball.position);
+    playBounceSound();
+    damageCooldown = 0.8;
+    return;
+  }
+
+  hp -= 1;
+  updateHeartsUI();
+  damageFlashTimer = 0.28;
+  playFailSound();
+  triggerShake(0.65);
+  damageCooldown = 1.1;
+
+  if (hp <= 0) {
+    endGame();
+  }
+}
+
+function updatePowerups(dt) {
+  if (damageCooldown > 0) damageCooldown = Math.max(0, damageCooldown - dt);
+  if (damageFlashTimer > 0) damageFlashTimer = Math.max(0, damageFlashTimer - dt);
+
+  if (hasShield) {
+    shieldMesh.visible = true;
+    shieldMesh.position.copy(ball.position);
+    shieldMesh.position.y += ballRadius + 0.34;
+    shieldMesh.rotation.y += dt * 2.4;
+  } else {
+    shieldMesh.visible = false;
+  }
+
+  if (invulnerabilityTimer > 0) {
+    invulnerabilityTimer = Math.max(0, invulnerabilityTimer - dt);
+    const hue = (performance.now() * 0.0008) % 1;
+    ball.material.color.setHSL(hue, 0.95, 0.58);
+    updateInvulnerabilityMusic();
+    if (invulnerabilityTimer === 0) {
+      ball.material.color.setHex(colors.ball);
+      stopInvulnerabilityMusic();
+    }
+  } else if (damageFlashTimer > 0) {
+    ball.material.color.setHex(0xff1744);
+  } else {
+    ball.material.color.setHex(colors.ball);
+  }
+}
+
+function activatePendingPowerups() {
+  if (pendingInvulnerability) {
+    pendingInvulnerability = false;
+    invulnerabilityTimer = 10;
+    startInvulnerabilityMusic();
+  }
+  if (pendingShield) {
+    pendingShield = false;
+    hasShield = true;
+    shieldMesh.visible = true;
+  }
+}
+
+function updateLevelCompleteUI() {
+  completeSummaryEl.textContent = `Level ${currentLevel} cleared. Coins: ${coins}. Choose one reward, then start Level ${currentLevel + 1}.`;
+  rewardHpButton.disabled = rewardChosen || hp >= maxHp;
+  rewardAmmoButton.disabled = rewardChosen;
+  nextLevelButton.disabled = !rewardChosen;
+  buyInvulnerabilityButton.disabled = coins < invulnerabilityCost || pendingInvulnerability;
+  buyShieldButton.disabled = coins < shieldCost || pendingShield || hasShield;
+}
+
+function completeLevel() {
+  if (isLevelComplete) return;
+  isLevelComplete = true;
+  stopShooting();
+  stopInvulnerabilityMusic();
+  rewardChosen = false;
+  platformsPassedThisLevel = getLevelTarget();
+  updateLevelUI();
+  ballVelocity = 0;
+  levelCompleteEl.hidden = false;
+  shopStatusEl.textContent = '';
+  updateLevelCompleteUI();
+}
+
 const _ballLocal = new THREE.Vector3();
 const _collisionPoint = new THREE.Vector3();
 const _bulletImpactPoint = new THREE.Vector3();
 const _bulletImpactLocal = new THREE.Vector3();
+const _crateWorldPosition = new THREE.Vector3();
 
 const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
 const debugMarker = collisionDebugEnabled
@@ -1072,11 +1625,18 @@ function handlePlatformCollision(previousY) {
     if (!contact.tile) continue;
 
     if (contact.tile.type === 'red') {
-      playFailSound();
-      triggerShake(0.65);
       contact.tile.material.emissive.setHex(0x7a0000);
       contact.tile.material.emissiveIntensity = 0.45;
-      endGame();
+      applyDamage();
+      ball.position.y = platformTop + ballRadius;
+      ballVelocity = bounceVelocity * 0.72;
+      return;
+    }
+
+    if (contact.tile.type === 'finish') {
+      ball.position.y = platformTop + ballRadius;
+      ballVelocity = 0;
+      completeLevel();
       return;
     }
 
@@ -1104,6 +1664,9 @@ function recyclePlatforms() {
     if (!platform.scored && ball.position.y < y - platformThickness) {
       platform.scored = true;
       score += 1;
+      if (!platform.final) {
+        platformsPassedThisLevel = Math.min(getLevelTarget(), platformsPassedThisLevel + 1);
+      }
       scoreEl.textContent = String(score);
       updateLevelUI();
       gravity = -14 - Math.min(score * 0.08, 3.5);
@@ -1117,9 +1680,6 @@ function recyclePlatforms() {
         if (child.material) child.material.dispose();
       });
       platforms.splice(i, 1);
-      lowestPlatformY -= platformSpacing;
-      createPlatform(lowestPlatformY, nextPlatformId);
-      nextPlatformId += 1;
     }
   }
 }
@@ -1166,7 +1726,7 @@ function updateTileFlashes(dt) {
 }
 
 function onPointerDown(event) {
-  if (isPaused) return;
+  if (isPaused || isLevelComplete) return;
   if (isGameOver) {
     resetGame();
     return;
@@ -1177,7 +1737,7 @@ function onPointerDown(event) {
 }
 
 function onPointerMove(event) {
-  if (!drag.active || isGameOver || isPaused) return;
+  if (!drag.active || isGameOver || isPaused || isLevelComplete) return;
   const dx = event.clientX - drag.x;
   drag.x = event.clientX;
   drag.targetRotation += dx * 0.012;
@@ -1186,7 +1746,7 @@ function onPointerMove(event) {
 function onPointerUp() {
   const wasDragging = drag.active;
   drag.active = false;
-  if (wasDragging && !isGameOver && !isPaused) {
+  if (wasDragging && !isGameOver && !isPaused && !isLevelComplete) {
     startShooting();
   }
 }
@@ -1222,6 +1782,56 @@ closePanelButton.addEventListener('click', (event) => {
   setPaused(false);
 });
 
+levelCompleteEl.addEventListener('pointerdown', (event) => {
+  event.stopPropagation();
+});
+
+rewardHpButton.addEventListener('click', () => {
+  if (rewardChosen) return;
+  playRewardSound();
+  if (hp < maxHp) {
+    hp += 1;
+    updateHeartsUI();
+  }
+  rewardChosen = true;
+  updateLevelCompleteUI();
+});
+
+rewardAmmoButton.addEventListener('click', () => {
+  if (rewardChosen) return;
+  playRewardSound();
+  maxAmmo += 1;
+  ammo = maxAmmo;
+  rebuildAmmoUI();
+  syncOptionsPanel();
+  rewardChosen = true;
+  updateLevelCompleteUI();
+});
+
+buyInvulnerabilityButton.addEventListener('click', () => {
+  if (coins < invulnerabilityCost || pendingInvulnerability) return;
+  coins -= invulnerabilityCost;
+  pendingInvulnerability = true;
+  updateCoinsUI();
+  shopStatusEl.textContent = 'Invulnerability will activate at the start of the next level.';
+  updateLevelCompleteUI();
+});
+
+buyShieldButton.addEventListener('click', () => {
+  if (coins < shieldCost || pendingShield || hasShield) return;
+  coins -= shieldCost;
+  pendingShield = true;
+  updateCoinsUI();
+  shopStatusEl.textContent = 'Shield will activate at the start of the next level.';
+  updateLevelCompleteUI();
+});
+
+nextLevelButton.addEventListener('click', () => {
+  if (!rewardChosen) return;
+  currentLevel += 1;
+  startLevel();
+});
+
 impulseInput.addEventListener('input', () => {
   setShootingImpulse(impulseInput.value);
 });
@@ -1232,7 +1842,7 @@ fireIntervalInput.addEventListener('input', () => {
 });
 
 maxAmmoInput.addEventListener('input', () => {
-  maxAmmo = Math.max(1, Math.min(12, Math.floor(Number(maxAmmoInput.value) || defaultMaxAmmo)));
+  maxAmmo = Math.max(1, Math.min(20, Math.floor(Number(maxAmmoInput.value) || defaultMaxAmmo)));
   ammo = Math.min(ammo, maxAmmo);
   rebuildAmmoUI();
   maxAmmoInput.value = String(maxAmmo);
@@ -1256,11 +1866,27 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.033);
 
   if (!isPaused) {
-    world.rotation.y += (drag.targetRotation - world.rotation.y) * 0.22;
+    let clampedTarget = drag.targetRotation;
+    for (const platform of platforms) {
+      if (platform.wallAngle !== null) {
+        const platTop = platform.group.position.y + platformThickness / 2;
+        if (Math.abs(ball.position.y - platTop) < 3) {
+          const wallLimit = -platform.wallAngle;
+          const currentSign = Math.sign(world.rotation.y - wallLimit);
+          const targetSign = Math.sign(clampedTarget - wallLimit);
+          if (currentSign !== 0 && targetSign !== 0 && currentSign !== targetSign) {
+            clampedTarget = wallLimit;
+          }
+        }
+      }
+    }
+    drag.targetRotation = clampedTarget;
+    world.rotation.y += (clampedTarget - world.rotation.y) * 0.22;
   }
 
-  if (!isGameOver && !isPaused) {
+  if (!isGameOver && !isPaused && !isLevelComplete) {
     updateShooting(dt);
+    updatePowerups(dt);
 
     const previousY = ball.position.y;
     ballVelocity += gravity * dt;
@@ -1268,9 +1894,11 @@ function animate() {
     ball.rotation.x += dt * 8;
 
     scene.updateMatrixWorld(true);
+    checkBallCrateHit(previousY);
     handlePlatformCollision(previousY);
     updateBullets(dt);
     updateEnemies(dt);
+    updateCoinPickups(dt);
     recyclePlatforms();
     updateParticles(dt);
     updateFloatingTexts(dt);

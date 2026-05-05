@@ -7,6 +7,10 @@
   </head>
   <body>
     <div id="ui">
+      <div id="top-stats">
+        <div id="hearts" aria-label="Health"></div>
+        <div id="coins">0 coins</div>
+      </div>
       <div id="score">0</div>
       <div id="level-progress">
         <div id="level-label">Level 1</div>
@@ -36,7 +40,7 @@
         </label>
         <label>
           Total bullet count
-          <input id="max-ammo-input" type="number" min="1" max="12" step="1" />
+          <input id="max-ammo-input" type="number" min="1" max="20" step="1" />
         </label>
         <button id="close-panel-button" type="button">Close</button>
       </div>
@@ -45,6 +49,23 @@
       <h1>Game Over</h1>
       <p id="final-score">0</p>
       <p id="restart-hint">Click or tap to restart</p>
+    </div>
+    <div id="level-complete" hidden>
+      <div class="complete-card">
+        <h1>Level Completed</h1>
+        <p id="complete-summary">Choose a reward before the next tower.</p>
+        <div class="reward-grid">
+          <button id="reward-hp" type="button">Recover 1 HP</button>
+          <button id="reward-ammo" type="button">+1 Bullet</button>
+        </div>
+        <h2>Powerup Shop</h2>
+        <div class="shop-grid">
+          <button id="buy-invulnerability" type="button">Buy Invulnerability<br /><span>20 coins</span></button>
+          <button id="buy-shield" type="button">Buy Shield<br /><span>20 coins</span></button>
+        </div>
+        <p id="shop-status"></p>
+        <button id="next-level-button" type="button">Play Next Level</button>
+      </div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>
