@@ -102,6 +102,7 @@ let ammo = maxAmmo;
 let isShooting = false;
 let fireCooldown = 0;
 let lastEmptySoundTime = -Infinity;
+let combo = 0;
 const platforms = [];
 const bullets = [];
 const enemies = [];
@@ -703,6 +704,21 @@ function reloadAmmo() {
   return true;
 }
 
+function increaseCombo() {
+  combo += 1;
+  if (combo > 1) {
+    spawnFloatingText(`Combo x${combo}`, ball.position, 0xffc107, true);
+  }
+}
+
+function resetCombo(showLoss = true) {
+  if (combo <= 0) return;
+  combo = 0;
+  if (showLoss) {
+    spawnFloatingText('Combo Loss', ball.position, 0xff7043, true);
+  }
+}
+
 function setShootingImpulse(value) {
   const nextValue = Number.parseFloat(value);
   bulletImpulse = Number.isFinite(nextValue)
@@ -1019,11 +1035,17 @@ function removeEnemyAt(index, explosionColor) {
   spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
 }
 
+function killEnemyAt(index, explosionColor) {
+  const enemy = enemies[index];
+  if (enemy.type === 'bat') playBatDeathSound();
+  removeEnemyAt(index, explosionColor);
+  increaseCombo();
+}
+
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
   if (enemy.type === 'bat') {
-    playBatDeathSound();
-    removeEnemyAt(enemyIndex, colors.particle);
+    killEnemyAt(enemyIndex, colors.particle);
     return;
   }
 
@@ -1033,8 +1055,40 @@ function damageEnemy(enemyIndex) {
   enemy.material.emissiveIntensity = 0.9;
 
   if (enemy.hp <= 0) {
-    removeEnemyAt(enemyIndex, colors.red);
+    killEnemyAt(enemyIndex, colors.red);
   }
+}
+
+function getBallColliderPositions() {
+  const offset = ballRadius * 0.58;
+  const tangentLength = Math.hypot(ball.position.x, ball.position.z) || 1;
+  _ballTangent.set(-ball.position.z / tangentLength, 0, ball.position.x / tangentLength);
+
+  _ballBottomCollider.copy(ball.position).y -= offset;
+  _ballTopCollider.copy(ball.position).y += offset;
+  _ballLeftCollider.copy(ball.position).addScaledVector(_ballTangent, -offset);
+  _ballRightCollider.copy(ball.position).addScaledVector(_ballTangent, offset);
+
+  return {
+    bottom: _ballBottomCollider,
+    top: _ballTopCollider,
+    left: _ballLeftCollider,
+    right: _ballRightCollider,
+  };
+}
+
+function getBallEnemyContact(enemy) {
+  const colliders = getBallColliderPositions();
+  const hitRadius = enemy.collisionRadius + ballRadius * 0.42;
+  const hitRadiusSq = hitRadius * hitRadius;
+
+  if (colliders.bottom.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'bottom';
+  if (colliders.top.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'top';
+  if (colliders.left.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'left';
+  if (colliders.right.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'right';
+
+  const fallbackRadius = enemy.collisionRadius + ballRadius * 0.55;
+  return ball.position.distanceToSquared(enemy.group.position) <= fallbackRadius * fallbackRadius ? 'body' : null;
 }
 
 function checkBulletCrateHit(bullet, previousY) {
@@ -1117,8 +1171,18 @@ function updateEnemies(dt) {
       }
     }
 
-    const playerHitRadius = enemy.collisionRadius + ballRadius * 0.78;
-    if (ball.position.distanceToSquared(enemy.group.position) <= playerHitRadius * playerHitRadius) {
+    const contact = getBallEnemyContact(enemy);
+    if (contact === 'bottom' && enemy.type === 'bat' && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+      killEnemyAt(i, colors.particle);
+      if (reloadAmmo()) {
+        spawnFloatingText(`+ ${maxAmmo}`, ball.position);
+        playReloadSound();
+      }
+      ballVelocity = Math.max(ballVelocity, bounceVelocity * 0.7);
+      continue;
+    }
+
+    if (contact) {
       applyDamage();
       return;
     }
@@ -1147,7 +1211,7 @@ function updateParticles(dt) {
   }
 }
 
-function spawnFloatingText(text, position) {
+function spawnFloatingText(text, position, color = 0x2ecc71, followBall = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 128;
@@ -1159,7 +1223,7 @@ function spawnFloatingText(text, position) {
   context.lineWidth = 8;
   context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
   context.strokeText(text, canvas.width / 2, canvas.height / 2);
-  context.fillStyle = '#2ecc71';
+  context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
   context.fillText(text, canvas.width / 2, canvas.height / 2);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -1170,7 +1234,7 @@ function spawnFloatingText(text, position) {
   sprite.scale.set(1.35, 0.68, 1);
   sprite.renderOrder = 20;
   scene.add(sprite);
-  floatingTexts.push({ sprite, material, texture, life: 1, startY: sprite.position.y });
+  floatingTexts.push({ sprite, material, texture, life: 1, startY: sprite.position.y, followBall });
 }
 
 function updateFloatingTexts(dt) {
@@ -1178,7 +1242,12 @@ function updateFloatingTexts(dt) {
     const item = floatingTexts[i];
     item.life -= dt;
     const progress = 1 - Math.max(0, item.life);
-    item.sprite.position.y = item.startY + progress * 1.1;
+    if (item.followBall) {
+      item.sprite.position.copy(ball.position);
+      item.sprite.position.y += ballRadius + 0.28 + progress * 1.1;
+    } else {
+      item.sprite.position.y = item.startY + progress * 1.1;
+    }
     item.sprite.material.opacity = Math.max(0, item.life);
     const scale = 1 + progress * 0.22;
     item.sprite.scale.set(1.35 * scale, 0.68 * scale, 1);
@@ -1236,6 +1305,7 @@ function startLevel() {
   bounceVelocity = 7.7;
   world.rotation.y = 0;
   drag.targetRotation = 0;
+  combo = 0;
   isGameOver = false;
   isLevelComplete = false;
   levelCompleteEl.hidden = true;
@@ -1387,6 +1457,11 @@ const _collisionPoint = new THREE.Vector3();
 const _bulletImpactPoint = new THREE.Vector3();
 const _bulletImpactLocal = new THREE.Vector3();
 const _crateWorldPosition = new THREE.Vector3();
+const _ballTangent = new THREE.Vector3();
+const _ballBottomCollider = new THREE.Vector3();
+const _ballTopCollider = new THREE.Vector3();
+const _ballLeftCollider = new THREE.Vector3();
+const _ballRightCollider = new THREE.Vector3();
 
 const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
 const debugMarker = collisionDebugEnabled
@@ -1521,6 +1596,7 @@ function handlePlatformCollision(previousY) {
       contact.tile.material.emissive.setHex(0x7a0000);
       contact.tile.material.emissiveIntensity = 0.45;
       applyDamage();
+      if (!isGameOver) resetCombo();
       ball.position.y = platformTop + ballRadius;
       ballVelocity = bounceVelocity * 0.72;
       return;
@@ -1535,6 +1611,7 @@ function handlePlatformCollision(previousY) {
 
     ball.position.y = platformTop + ballRadius;
     ballVelocity = bounceVelocity;
+    resetCombo();
     if (reloadAmmo()) {
       spawnFloatingText(`+ ${maxAmmo}`, ball.position);
       playReloadSound();
