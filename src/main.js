@@ -45,6 +45,17 @@ const buyInvulnerabilityButton = document.querySelector('#buy-invulnerability');
 const buyShieldButton = document.querySelector('#buy-shield');
 const shopStatusEl = document.querySelector('#shop-status');
 const nextLevelButton = document.querySelector('#next-level-button');
+const extraButton = document.querySelector('#extra-button');
+const extraPanelEl = document.querySelector('#extra-panel');
+const closeExtraButton = document.querySelector('#close-extra-button');
+const impulseAButton = document.querySelector('#impulse-a-btn');
+const impulseBButton = document.querySelector('#impulse-b-btn');
+const impulseBResetInput = document.querySelector('#impulse-b-reset-input');
+const impulseBShotgunInput = document.querySelector('#impulse-b-shotgun-input');
+const impulseBResetLabel = document.querySelector('#impulse-b-reset-label');
+const impulseBShotgunLabel = document.querySelector('#impulse-b-shotgun-label');
+const controlAButton = document.querySelector('#control-a-btn');
+const controlBButton = document.querySelector('#control-b-btn');
 
 const world = new THREE.Group();
 scene.add(world);
@@ -72,7 +83,7 @@ const platformOuterRadius = 3.15;
 const platformThickness = 0.22;
 const platformSpacing = 6.45;
 const ballRadius = 0.32;
-const pillarRadius = 0.675;
+const pillarRadius = 1.0125;
 const twoPi = Math.PI * 2;
 const collisionDebugEnabled = new URLSearchParams(window.location.search).has('debug');
 const defaultMaxAmmo = 5;
@@ -106,6 +117,13 @@ let platformsPassedThisLevel = 0;
 let nextPlatformId = 0;
 let isGameOver = false;
 let isPaused = false;
+let impulseMode = 'A';
+let impulseBResetSpeed = defaultGravity * 0.1;
+let impulseBShotgunImpulse = 4;
+let controlMode = 'A';
+let timeScale = 1;
+let damageSlowdownTimer = 0;
+const touchPointerIds = new Set();
 let isLevelComplete = false;
 let hp = maxHp;
 let coins = 0;
@@ -128,6 +146,7 @@ let lastEmptySoundTime = -Infinity;
 let combo = 0;
 let selectedWeapon = 'machinegun';
 let nextShotId = 1;
+let scaledTime = 0;
 const platforms = [];
 const bullets = [];
 const enemies = [];
@@ -775,12 +794,11 @@ function positionEnemy(enemy) {
 
     const worldAngle = enemy.localAngle + world.rotation.y;
     _pillarWormNormal.set(Math.cos(worldAngle), 0, Math.sin(worldAngle));
-    const ballLaneRadius = getBulletLaneRadius();
     const ballRadialLength = Math.hypot(ball.position.x, ball.position.z) || 1;
     _ballRadialNormal.set(ball.position.x / ballRadialLength, 0, ball.position.z / ballRadialLength);
-    enemy.interactable = _pillarWormNormal.dot(_ballRadialNormal) > 0.15;
+    enemy.interactable = _pillarWormNormal.dot(_ballRadialNormal) > -0.1;
     if (enemy.interactable) {
-      enemy.collisionPosition.copy(_pillarWormNormal).multiplyScalar(ballLaneRadius);
+      enemy.collisionPosition.copy(_pillarWormNormal).multiplyScalar(enemy.visualRadius);
       enemy.collisionPosition.y = enemy.y + world.position.y;
     }
     return;
@@ -996,19 +1014,23 @@ function selectWeapon(weapon) {
   if (isShooting) fireCooldown = Math.min(fireCooldown, getCurrentFireInterval());
 }
 
+function showReloadText() {
+  weaponIndicatorEl.textContent = 'Reload';
+  setTimeout(() => updateWeaponUI(), 600);
+}
+
 function reloadAmmo() {
   if (ammo === maxAmmo) return false;
 
   ammo = maxAmmo;
   updateAmmoUI();
+  showReloadText();
   return true;
 }
 
 function increaseCombo() {
   combo += 1;
-  if (combo > 1) {
-    spawnFloatingText(`Combo x${combo}`, ball.position, 0xffc107, true);
-  }
+  spawnFloatingText(String(combo), ball.position, 0xffc107, true);
 }
 
 function resetCombo(showLoss = true) {
@@ -1099,6 +1121,8 @@ function syncOptionsPanel() {
   stompImpulseInput.value = stompImpulse.toFixed(1);
   cannonChargeInput.value = cannonChargeTime.toFixed(1);
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
+  impulseBResetInput.value = impulseBResetSpeed.toFixed(1);
+  impulseBShotgunInput.value = impulseBShotgunImpulse.toFixed(1);
 }
 
 function getLevelTarget(level = currentLevel) {
@@ -1163,6 +1187,7 @@ function updatePersistentUI() {
 function setPaused(paused) {
   isPaused = paused;
   pausePanelEl.hidden = !paused;
+  extraPanelEl.hidden = true;
   if (paused) {
     drag.active = false;
     stopShooting();
@@ -1175,7 +1200,6 @@ function setPaused(paused) {
 
 function stopShooting() {
   isShooting = false;
-  fireCooldown = 0;
 }
 
 function clearBullets() {
@@ -1208,9 +1232,14 @@ function fireMachinegun() {
   updateAmmoUI();
   spawnBullet();
   playShootSound();
-  const shotVelocityCap = getShotUpwardVelocityCap();
-  if (ballVelocity < shotVelocityCap) {
-    ballVelocity = Math.min(ballVelocity + bulletImpulse, shotVelocityCap);
+
+  if (impulseMode === 'B') {
+    ballVelocity = impulseBResetSpeed;
+  } else {
+    const shotVelocityCap = getShotUpwardVelocityCap();
+    if (ballVelocity < shotVelocityCap) {
+      ballVelocity = Math.min(ballVelocity + bulletImpulse, shotVelocityCap);
+    }
   }
 
   return true;
@@ -1238,10 +1267,17 @@ function fireShotgun() {
     spawnBullet(velocity, shotId);
   }
   playShootSound();
-  const shotVelocityCap = Math.max(baseShotUpwardVelocityCap, bulletImpulse * 2.25);
-  if (ballVelocity < shotVelocityCap) {
-    ballVelocity = Math.min(ballVelocity + bulletImpulse * 3, shotVelocityCap);
+
+  if (impulseMode === 'B') {
+    ballVelocity = impulseBResetSpeed;
+    ballVelocity -= impulseBShotgunImpulse;
+  } else {
+    const shotVelocityCap = Math.max(baseShotUpwardVelocityCap, bulletImpulse * 2.25);
+    if (ballVelocity < shotVelocityCap) {
+      ballVelocity = Math.min(ballVelocity + bulletImpulse * 3, shotVelocityCap);
+    }
   }
+
   return true;
 }
 
@@ -1252,8 +1288,10 @@ function fireCurrentWeapon() {
 function startShooting() {
   if (isGameOver || isPaused) return;
   isShooting = true;
-  fireCurrentWeapon();
-  fireCooldown = getCurrentFireInterval();
+  if (fireCooldown <= 0) {
+    fireCurrentWeapon();
+    fireCooldown = getCurrentFireInterval();
+  }
 }
 
 function updateShooting(dt) {
@@ -1681,7 +1719,7 @@ function updateCannons(dt) {
     if (contact === 'bottom' && ballVelocity < 0 && ball.position.y > getCannonWorldPosition(cannon).y) {
       destroyCannon(i);
       if (reloadAmmo()) {
-        spawnFloatingText(`+ ${maxAmmo}`, ball.position);
+        spawnFloatingText('Reload', ball.position);
         playReloadSound();
       }
       ballVelocity = Math.max(ballVelocity, stompImpulse);
@@ -1778,7 +1816,7 @@ function updateEnemies(dt) {
     positionEnemy(enemy);
 
     if (enemy.type === 'bat') {
-      const flap = Math.sin(performance.now() * 0.018 + enemy.flapOffset) * 0.55;
+      const flap = Math.sin(scaledTime * 18 + enemy.flapOffset) * 0.55;
       enemy.leftWing.rotation.z = -0.28 - flap;
       enemy.rightWing.rotation.z = 0.28 + flap;
     } else if (enemy.type === 'worm' || enemy.type === 'pillarWorm') {
@@ -1803,7 +1841,7 @@ function updateEnemies(dt) {
     if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
       killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : colors.particle);
       if (reloadAmmo()) {
-        spawnFloatingText(`+ ${maxAmmo}`, ball.position);
+        spawnFloatingText('Reload', ball.position);
         playReloadSound();
       }
       ballVelocity = Math.max(ballVelocity, stompImpulse);
@@ -1971,6 +2009,8 @@ function resetGame() {
   invulnerabilityTimer = 0;
   hasShield = false;
   shieldMesh.visible = false;
+  damageSlowdownTimer = 0;
+  timeScale = 1;
   updatePersistentUI();
   startLevel();
 }
@@ -2007,6 +2047,8 @@ function applyDamage() {
   hp -= 1;
   updateHeartsUI();
   damageFlashTimer = 0.28;
+  damageSlowdownTimer = 2;
+  timeScale = 0.5;
   playFailSound();
   triggerShake(0.65);
   damageCooldown = 1.1;
@@ -2031,13 +2073,23 @@ function updatePowerups(dt) {
 
   if (invulnerabilityTimer > 0) {
     invulnerabilityTimer = Math.max(0, invulnerabilityTimer - dt);
-    const hue = (performance.now() * 0.0008) % 1;
-    ball.material.color.setHSL(hue, 0.95, 0.58);
     updateInvulnerabilityMusic();
     if (invulnerabilityTimer === 0) {
-      ball.material.color.setHex(colors.ball);
       stopInvulnerabilityMusic();
     }
+  }
+}
+
+function updateBallVisual() {
+  if (invulnerabilityTimer > 0) {
+    const hue = (performance.now() * 0.0008) % 1;
+    ball.material.color.setHSL(hue, 0.95, 0.58);
+  } else if (damageSlowdownTimer > 0) {
+    const blink = Math.floor(performance.now() / 80) % 2;
+    ball.material.color.setHex(blink ? 0xff1744 : colors.ball);
+  } else if (hp === 1) {
+    const blink = Math.floor(performance.now() / 200) % 2;
+    ball.material.color.setHex(blink ? 0xff1744 : colors.ball);
   } else if (damageFlashTimer > 0) {
     ball.material.color.setHex(0xff1744);
   } else {
@@ -2284,7 +2336,7 @@ function handlePlatformCollision(previousY) {
     ballVelocity = bounceVelocity;
     resetCombo();
     if (reloadAmmo()) {
-      spawnFloatingText(`+ ${maxAmmo}`, ball.position);
+      spawnFloatingText('Reload', ball.position);
       playReloadSound();
     }
     playBounceSound();
@@ -2371,6 +2423,28 @@ function onPointerDown(event) {
     resetGame();
     return;
   }
+
+  if (controlMode === 'B' && event.pointerType === 'touch') {
+    touchPointerIds.add(event.pointerId);
+    if (touchPointerIds.size === 1) {
+      stopShooting();
+      drag.active = true;
+      drag.x = event.clientX;
+    }
+    if (touchPointerIds.size >= 2) {
+      drag.x = event.clientX;
+      startShooting();
+    }
+    return;
+  }
+
+  if (controlMode === 'B') {
+    stopShooting();
+    drag.active = true;
+    drag.x = event.clientX;
+    return;
+  }
+
   stopShooting();
   drag.active = true;
   drag.x = event.clientX;
@@ -2380,10 +2454,26 @@ function onPointerMove(event) {
   if (!drag.active || isGameOver || isPaused || isLevelComplete) return;
   const dx = event.clientX - drag.x;
   drag.x = event.clientX;
-  drag.targetRotation += dx * 0.012;
+  drag.targetRotation += dx * 0.012 * timeScale;
 }
 
-function onPointerUp() {
+function onPointerUp(event) {
+  if (controlMode === 'B' && event.pointerType === 'touch') {
+    touchPointerIds.delete(event.pointerId);
+    if (touchPointerIds.size < 2) {
+      stopShooting();
+    }
+    if (touchPointerIds.size === 0) {
+      drag.active = false;
+    }
+    return;
+  }
+
+  if (controlMode === 'B') {
+    drag.active = false;
+    return;
+  }
+
   const wasDragging = drag.active;
   drag.active = false;
   if (wasDragging && !isGameOver && !isPaused && !isLevelComplete) {
@@ -2391,7 +2481,13 @@ function onPointerUp() {
   }
 }
 
-function onPointerCancel() {
+function onPointerCancel(event) {
+  if (controlMode === 'B' && event && event.pointerType === 'touch') {
+    touchPointerIds.delete(event.pointerId);
+    if (touchPointerIds.size < 2) stopShooting();
+    if (touchPointerIds.size === 0) drag.active = false;
+    return;
+  }
   drag.active = false;
   stopShooting();
 }
@@ -2407,9 +2503,22 @@ function onKeyDown(event) {
     selectWeapon('shotgun');
     return;
   }
+  if (!isTyping && event.code === 'Space' && controlMode === 'B') {
+    event.preventDefault();
+    if (!isGameOver && !isPaused && !isLevelComplete) {
+      startShooting();
+    }
+    return;
+  }
   if (event.key.toLowerCase() === 'p') {
     if (isGameOver) return;
     setPaused(!isPaused);
+  }
+}
+
+function onKeyUp(event) {
+  if (event.code === 'Space' && controlMode === 'B') {
+    stopShooting();
   }
 }
 
@@ -2430,6 +2539,71 @@ closePanelButton.addEventListener('pointerdown', (event) => {
 closePanelButton.addEventListener('click', (event) => {
   event.stopPropagation();
   setPaused(false);
+});
+
+extraButton.addEventListener('pointerdown', (event) => {
+  event.stopPropagation();
+});
+
+extraButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  extraPanelEl.hidden = false;
+  pausePanelEl.hidden = true;
+  impulseBResetLabel.hidden = impulseMode !== 'B';
+  impulseBShotgunLabel.hidden = impulseMode !== 'B';
+});
+
+closeExtraButton.addEventListener('pointerdown', (event) => {
+  event.stopPropagation();
+});
+
+closeExtraButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  extraPanelEl.hidden = true;
+  pausePanelEl.hidden = false;
+  syncOptionsPanel();
+});
+
+impulseAButton.addEventListener('click', () => {
+  impulseMode = 'A';
+  impulseAButton.classList.add('active');
+  impulseBButton.classList.remove('active');
+  impulseBResetLabel.hidden = true;
+  impulseBShotgunLabel.hidden = true;
+});
+
+impulseBButton.addEventListener('click', () => {
+  impulseMode = 'B';
+  impulseBButton.classList.add('active');
+  impulseAButton.classList.remove('active');
+  impulseBResetLabel.hidden = false;
+  impulseBShotgunLabel.hidden = false;
+});
+
+impulseBResetInput.addEventListener('input', () => {
+  const val = Number(impulseBResetInput.value);
+  impulseBResetSpeed = Number.isFinite(val) ? Math.max(-10, Math.min(10, val)) : defaultGravity * 0.1;
+});
+
+impulseBShotgunInput.addEventListener('input', () => {
+  const val = Number(impulseBShotgunInput.value);
+  impulseBShotgunImpulse = Number.isFinite(val) ? Math.max(0, Math.min(20, val)) : 4;
+});
+
+controlAButton.addEventListener('click', () => {
+  controlMode = 'A';
+  controlAButton.classList.add('active');
+  controlBButton.classList.remove('active');
+  touchPointerIds.clear();
+  stopShooting();
+});
+
+controlBButton.addEventListener('click', () => {
+  controlMode = 'B';
+  controlBButton.classList.add('active');
+  controlAButton.classList.remove('active');
+  touchPointerIds.clear();
+  stopShooting();
 });
 
 levelCompleteEl.addEventListener('pointerdown', (event) => {
@@ -2531,6 +2705,7 @@ window.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
 window.addEventListener('pointercancel', onPointerCancel);
 window.addEventListener('keydown', onKeyDown);
+window.addEventListener('keyup', onKeyUp);
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -2541,10 +2716,19 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.033);
+  const realDt = Math.min(clock.getDelta(), 0.033);
+
+  if (damageSlowdownTimer > 0) {
+    damageSlowdownTimer = Math.max(0, damageSlowdownTimer - realDt);
+    if (damageSlowdownTimer === 0) timeScale = 1;
+  }
+
+  const dt = realDt * timeScale;
+  scaledTime += dt;
 
   if (!isPaused) {
-    world.rotation.y += (drag.targetRotation - world.rotation.y) * 0.22;
+    const lerpFactor = 1 - Math.pow(1 - 0.22, timeScale);
+    world.rotation.y += (drag.targetRotation - world.rotation.y) * lerpFactor;
   }
 
   if (!isGameOver && !isPaused && !isLevelComplete) {
@@ -2570,6 +2754,8 @@ function animate() {
     updateTileFlashes(dt);
     updateCamera(dt);
   }
+
+  updateBallVisual();
 
   renderer.render(scene, camera);
 }
