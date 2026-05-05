@@ -23,15 +23,20 @@ const progressLabelEl = document.querySelector('#progress-label');
 const gameOverEl = document.querySelector('#game-over');
 const finalScoreEl = document.querySelector('#final-score');
 const ammoMagazineEl = document.querySelector('#ammo-magazine');
+const weaponIndicatorEl = document.querySelector('#weapon-indicator');
 const pauseButton = document.querySelector('#pause-button');
 const pausePanelEl = document.querySelector('#pause-panel');
 const closePanelButton = document.querySelector('#close-panel-button');
 const impulseInput = document.querySelector('#impulse-input');
 const fireIntervalInput = document.querySelector('#fire-interval-input');
+const shotgunSpreadInput = document.querySelector('#shotgun-spread-input');
+const shotgunIntervalInput = document.querySelector('#shotgun-interval-input');
 const maxAmmoInput = document.querySelector('#max-ammo-input');
 const gravityInput = document.querySelector('#gravity-input');
 const terminalVelocityInput = document.querySelector('#terminal-velocity-input');
 const stompImpulseInput = document.querySelector('#stomp-impulse-input');
+const cannonChargeInput = document.querySelector('#cannon-charge-input');
+const cannonCooldownInput = document.querySelector('#cannon-cooldown-input');
 const levelCompleteEl = document.querySelector('#level-complete');
 const completeSummaryEl = document.querySelector('#complete-summary');
 const rewardHpButton = document.querySelector('#reward-hp');
@@ -67,14 +72,19 @@ const platformOuterRadius = 3.15;
 const platformThickness = 0.22;
 const platformSpacing = 6.45;
 const ballRadius = 0.32;
+const pillarRadius = 0.675;
 const twoPi = Math.PI * 2;
 const collisionDebugEnabled = new URLSearchParams(window.location.search).has('debug');
 const defaultMaxAmmo = 5;
 const defaultFireInterval = 0.3;
+const defaultShotgunFireInterval = 0.7;
+const defaultShotgunSpreadAngle = 5;
 const defaultBulletImpulse = 4.3;
 const defaultGravity = -14;
 const defaultTerminalVelocity = 28;
 const defaultStompImpulse = 5.4;
+const defaultCannonChargeTime = 3;
+const defaultCannonCooldown = 5;
 const maxHp = 3;
 const invulnerabilityCost = 20;
 const shieldCost = 20;
@@ -87,6 +97,8 @@ let ballVelocity = 0;
 let gravity = defaultGravity;
 let terminalVelocity = defaultTerminalVelocity;
 let stompImpulse = defaultStompImpulse;
+let cannonChargeTime = defaultCannonChargeTime;
+let cannonCooldown = defaultCannonCooldown;
 let bounceVelocity = 7.7;
 let score = 0;
 let currentLevel = 1;
@@ -106,12 +118,16 @@ let hasShield = false;
 let rewardChosen = false;
 let maxAmmo = defaultMaxAmmo;
 let fireInterval = defaultFireInterval;
+let shotgunFireInterval = defaultShotgunFireInterval;
+let shotgunSpreadAngle = defaultShotgunSpreadAngle;
 let bulletImpulse = defaultBulletImpulse;
 let ammo = maxAmmo;
 let isShooting = false;
 let fireCooldown = 0;
 let lastEmptySoundTime = -Infinity;
 let combo = 0;
+let selectedWeapon = 'machinegun';
+let nextShotId = 1;
 const platforms = [];
 const bullets = [];
 const enemies = [];
@@ -119,6 +135,7 @@ const particles = [];
 const floatingTexts = [];
 const crates = [];
 const coinPickups = [];
+const cannons = [];
 
 let shakeIntensity = 0;
 let shakeDecay = 0;
@@ -127,7 +144,7 @@ const shakeOffset = new THREE.Vector3();
 const cameraBasePos = new THREE.Vector3();
 
 const pillar = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.27, 0.27, 80, 32),
+  new THREE.CylinderGeometry(pillarRadius, pillarRadius, 80, 48),
   new THREE.MeshStandardMaterial({ color: colors.pillar, roughness: 0.55 })
 );
 pillar.position.y = -30;
@@ -155,12 +172,19 @@ const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
 const coinPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xb8860b, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.7 });
 const shieldGeometry = new THREE.BoxGeometry(0.42, 0.14, 0.42);
+const cannonBaseGeometry = new THREE.CylinderGeometry(0.18, 0.24, 0.22, 16);
+const cannonMouthGeometry = new THREE.CylinderGeometry(0.11, 0.13, 0.34, 16);
+const cannonRingGeometry = new THREE.TorusGeometry(0.2, 0.018, 8, 32);
+const cannonLaserGeometry = new THREE.CylinderGeometry(0.11, 0.11, 36, 16);
 const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roughness: 0.62 });
 const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
 const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
 const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
 const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
 const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
+const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
+const cannonWarningMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.85 });
+const laserMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.65 });
 const shieldMaterial = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x00bcd4, emissiveIntensity: 0.35 });
 
 const shieldMesh = new THREE.Mesh(shieldGeometry, shieldMaterial);
@@ -323,6 +347,47 @@ function playBatDeathSound() {
     gain.connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.22);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playCannonActivateSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(620, now + 0.32);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.36);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playCannonFireSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const zap = ctx.createOscillator();
+    const zapGain = ctx.createGain();
+    zap.type = 'square';
+    zap.frequency.setValueAtTime(1300, now);
+    zap.frequency.exponentialRampToValueAtTime(220, now + 0.16);
+    zapGain.gain.setValueAtTime(0.28, now);
+    zapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    zap.connect(zapGain);
+    zapGain.connect(ctx.destination);
+    zap.start(now);
+    zap.stop(now + 0.2);
   } catch (_) {
     /* silent */
   }
@@ -556,6 +621,7 @@ function createPlatform(y, id, options = {}) {
   platforms.push(platData);
 
   if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
+  if (!isFinal) maybeSpawnCannon(platData, id);
 }
 
 function createCrate(platformGroup, angle, radius) {
@@ -630,7 +696,91 @@ function createWormMesh() {
   return { group, segments };
 }
 
+function createCannonMesh() {
+  const group = new THREE.Group();
+  const base = new THREE.Mesh(cannonBaseGeometry.clone(), cannonMaterial.clone());
+  base.position.y = 0.11;
+  base.castShadow = true;
+  group.add(base);
+
+  const mouth = new THREE.Mesh(cannonMouthGeometry.clone(), cannonMaterial.clone());
+  mouth.position.y = 0.34;
+  mouth.castShadow = true;
+  group.add(mouth);
+
+  const ring = new THREE.Mesh(cannonRingGeometry.clone(), cannonWarningMaterial.clone());
+  ring.position.y = 0.56;
+  ring.rotation.x = Math.PI / 2;
+  ring.visible = false;
+  group.add(ring);
+
+  const laser = new THREE.Mesh(cannonLaserGeometry.clone(), laserMaterial.clone());
+  laser.position.y = 18.56;
+  laser.visible = false;
+  group.add(laser);
+
+  return { group, base, mouth, ring, laser };
+}
+
+function maybeSpawnCannon(platformData, id) {
+  if (id < 7 || Math.random() > 0.16) return;
+  const validTiles = platformData.tiles.filter(tile => tile.type === 'blue' && !tile.broken);
+  if (validTiles.length === 0) return;
+
+  const playerLane = ((getBulletLaneAngle() - world.rotation.y) % twoPi + twoPi) % twoPi;
+  const cannonTile = validTiles.find(tile => angleInArc(playerLane, tile.start, tile.end));
+  if (!cannonTile) return;
+
+  const cannon = createCannonMesh();
+  const angle = playerLane;
+  const radius = platformOuterRadius - 0.8;
+  cannon.group.position.set(
+    Math.cos(angle) * radius,
+    platformThickness / 2 + 0.02,
+    Math.sin(angle) * radius
+  );
+  cannon.group.rotation.y = -angle + Math.PI / 2;
+  platformData.group.add(cannon.group);
+  cannons.push({
+    ...cannon,
+    platformData,
+    angle,
+    radius,
+    state: 'idle',
+    charge: 0,
+    cooldown: 0,
+    laserTimer: 0,
+    damagedThisShot: false,
+    hp: 5,
+    flashTimer: 0,
+  });
+}
+
 function positionEnemy(enemy) {
+  if (enemy.type === 'pillarWorm') {
+    enemy.localAngle = (enemy.localAngle + twoPi) % twoPi;
+    enemy.group.position.set(0, enemy.y, 0);
+    enemy.group.rotation.set(0, 0, 0);
+    for (let i = 0; i < enemy.segments.length; i += 1) {
+      const segmentAngle = enemy.localAngle - i * enemy.segmentArc * enemy.direction;
+      const segment = enemy.segments[i];
+      segment.position.set(
+        Math.cos(segmentAngle) * enemy.visualRadius,
+        Math.sin(performance.now() * 0.008 + i) * 0.015,
+        Math.sin(segmentAngle) * enemy.visualRadius
+      );
+      segment.rotation.y = -segmentAngle + Math.PI / 2;
+      segment.rotation.z = Math.PI / 2;
+    }
+    _enemyProjectedPosition.set(
+      ball.position.x,
+      enemy.y + world.position.y,
+      ball.position.z
+    );
+    enemy.collisionPosition.copy(_enemyProjectedPosition);
+    return;
+  }
+
   if (enemy.type === 'worm') {
     const localPosition = _enemyLocalPosition.set(
       Math.cos(enemy.localAngle) * enemy.orbitRadius,
@@ -711,6 +861,17 @@ function isWormAngleValid(platformData, angle) {
   return platformData.tiles.some(tile => isWormTile(tile) && angleInArc((angle + twoPi) % twoPi, tile.start, tile.end));
 }
 
+function isWormBodySupported(platformData, angle, radius) {
+  const segmentSpacing = 0.24 / radius;
+  for (let i = -1; i <= 4; i += 1) {
+    const forwardAngle = angle + i * segmentSpacing;
+    const backwardAngle = angle - i * segmentSpacing;
+    if (!isWormAngleValid(platformData, forwardAngle)) return false;
+    if (!isWormAngleValid(platformData, backwardAngle)) return false;
+  }
+  return true;
+}
+
 function createWorm(platformData, id, tile) {
   const worm = createWormMesh();
   const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
@@ -732,6 +893,32 @@ function createWorm(platformData, id, tile) {
   };
   positionEnemy(enemy);
   scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
+function createPillarWorm(y, id) {
+  const worm = createWormMesh();
+  worm.group.scale.setScalar(0.7);
+  const laneAngle = ((getBulletLaneAngle() - world.rotation.y + 0.18) % twoPi + twoPi) % twoPi;
+  const enemy = {
+    type: 'pillarWorm',
+    id,
+    group: worm.group,
+    segments: worm.segments,
+    y,
+    localAngle: laneAngle,
+    angle: laneAngle,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    visualRadius: pillarRadius + 0.26,
+    segmentArc: 0.19,
+    speed: 0.28 + Math.random() * 0.22,
+    collisionRadius: 0.34,
+    hp: 3,
+    flashTimer: 0,
+    collisionPosition: new THREE.Vector3(),
+  };
+  positionEnemy(enemy);
+  world.add(enemy.group);
   enemies.push(enemy);
 }
 
@@ -770,6 +957,10 @@ function maybeSpawnEnemiesForSection(platformData, id) {
   }
 
   maybeSpawnWorms(platformData, id);
+
+  if (id > 8 && Math.random() < 0.18 + difficulty * 0.12) {
+    createPillarWorm(sectionY - 0.45 + Math.random() * 0.9, id);
+  }
 }
 
 function rebuildAmmoUI() {
@@ -787,6 +978,16 @@ function updateAmmoUI() {
   ammoSegments.forEach((segment, index) => {
     segment.classList.toggle('filled', index < ammo);
   });
+}
+
+function updateWeaponUI() {
+  weaponIndicatorEl.textContent = selectedWeapon === 'shotgun' ? 'Weapon: Shotgun' : 'Weapon: Machinegun';
+}
+
+function selectWeapon(weapon) {
+  selectedWeapon = weapon;
+  updateWeaponUI();
+  if (isShooting) fireCooldown = Math.min(fireCooldown, getCurrentFireInterval());
 }
 
 function reloadAmmo() {
@@ -844,6 +1045,39 @@ function setStompImpulse(value) {
   stompImpulseInput.value = stompImpulse.toFixed(1);
 }
 
+function setCannonChargeTime(value) {
+  const nextValue = Number.parseFloat(value);
+  cannonChargeTime = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0.5, 10)
+    : defaultCannonChargeTime;
+  cannonChargeInput.value = cannonChargeTime.toFixed(1);
+}
+
+function setCannonCooldown(value) {
+  const nextValue = Number.parseFloat(value);
+  cannonCooldown = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0, 20)
+    : defaultCannonCooldown;
+  cannonCooldownInput.value = cannonCooldown.toFixed(1);
+}
+
+function setShotgunSpreadAngle(value) {
+  const nextValue = Number.parseFloat(value);
+  shotgunSpreadAngle = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0, 25)
+    : defaultShotgunSpreadAngle;
+  shotgunSpreadInput.value = shotgunSpreadAngle.toFixed(1);
+}
+
+function setShotgunFireInterval(value) {
+  const nextValue = Number.parseFloat(value);
+  shotgunFireInterval = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0.1, 3)
+    : defaultShotgunFireInterval;
+  shotgunIntervalInput.value = shotgunFireInterval.toFixed(2);
+  if (isShooting && selectedWeapon === 'shotgun') fireCooldown = Math.min(fireCooldown, shotgunFireInterval);
+}
+
 function getShotUpwardVelocityCap() {
   return Math.max(baseShotUpwardVelocityCap, bulletImpulse * 0.75);
 }
@@ -851,10 +1085,14 @@ function getShotUpwardVelocityCap() {
 function syncOptionsPanel() {
   impulseInput.value = bulletImpulse.toFixed(1);
   fireIntervalInput.value = fireInterval.toFixed(2);
+  shotgunSpreadInput.value = shotgunSpreadAngle.toFixed(1);
+  shotgunIntervalInput.value = shotgunFireInterval.toFixed(2);
   maxAmmoInput.value = String(maxAmmo);
   gravityInput.value = gravity.toFixed(1);
   terminalVelocityInput.value = terminalVelocity.toFixed(1);
   stompImpulseInput.value = stompImpulse.toFixed(1);
+  cannonChargeInput.value = cannonChargeTime.toFixed(1);
+  cannonCooldownInput.value = cannonCooldown.toFixed(1);
 }
 
 function getLevelTarget(level = currentLevel) {
@@ -941,16 +1179,20 @@ function clearBullets() {
   }
 }
 
-function spawnBullet() {
+function getCurrentFireInterval() {
+  return selectedWeapon === 'shotgun' ? shotgunFireInterval : fireInterval;
+}
+
+function spawnBullet(velocity = new THREE.Vector3(0, -bulletSpeed, 0), shotId = 0) {
   const mesh = new THREE.Mesh(bulletGeometry, bulletMaterial);
   mesh.position.copy(ball.position);
   mesh.position.y -= ballRadius + 0.06;
   mesh.renderOrder = 5;
   scene.add(mesh);
-  bullets.push({ mesh, life: bulletLifetime });
+  bullets.push({ mesh, life: bulletLifetime, velocity: velocity.clone(), shotgunShotId: shotId });
 }
 
-function fireBullet() {
+function fireMachinegun() {
   if (ammo <= 0) {
     playEmptyAmmoSound();
     return false;
@@ -968,11 +1210,44 @@ function fireBullet() {
   return true;
 }
 
+function fireShotgun() {
+  if (ammo < 4) {
+    playEmptyAmmoSound();
+    return false;
+  }
+
+  ammo -= 4;
+  updateAmmoUI();
+  const shotId = nextShotId;
+  nextShotId += 1;
+  const spreadRad = THREE.MathUtils.degToRad(shotgunSpreadAngle);
+  const tangentLength = Math.hypot(ball.position.x, ball.position.z) || 1;
+  _shotgunTangent.set(-ball.position.z / tangentLength, 0, ball.position.x / tangentLength);
+  for (let i = 0; i < 5; i += 1) {
+    const t = i / 4 - 0.5;
+    const angle = t * spreadRad;
+    const velocity = _shotgunVelocity
+      .set(0, -Math.cos(angle) * bulletSpeed, 0)
+      .addScaledVector(_shotgunTangent, Math.sin(angle) * bulletSpeed);
+    spawnBullet(velocity, shotId);
+  }
+  playShootSound();
+  const shotVelocityCap = Math.max(baseShotUpwardVelocityCap, bulletImpulse * 2.25);
+  if (ballVelocity < shotVelocityCap) {
+    ballVelocity = Math.min(ballVelocity + bulletImpulse * 3, shotVelocityCap);
+  }
+  return true;
+}
+
+function fireCurrentWeapon() {
+  return selectedWeapon === 'shotgun' ? fireShotgun() : fireMachinegun();
+}
+
 function startShooting() {
   if (isGameOver || isPaused) return;
   isShooting = true;
-  fireBullet();
-  fireCooldown = fireInterval;
+  fireCurrentWeapon();
+  fireCooldown = getCurrentFireInterval();
 }
 
 function updateShooting(dt) {
@@ -980,8 +1255,8 @@ function updateShooting(dt) {
 
   fireCooldown -= dt;
   while (isShooting && fireCooldown <= 0) {
-    fireBullet();
-    fireCooldown += fireInterval;
+    fireCurrentWeapon();
+    fireCooldown += getCurrentFireInterval();
   }
 }
 
@@ -990,7 +1265,7 @@ function updateBullets(dt) {
     const bullet = bullets[i];
     const previousY = bullet.mesh.position.y;
     bullet.life -= dt;
-    bullet.mesh.position.y -= bulletSpeed * dt;
+    bullet.mesh.position.addScaledVector(bullet.velocity, dt);
     bullet.mesh.scale.setScalar(Math.max(0.45, bullet.life / bulletLifetime));
 
     if (checkBulletEnemyHit(bullet)) {
@@ -1000,6 +1275,12 @@ function updateBullets(dt) {
     }
 
     if (checkBulletCrateHit(bullet, previousY)) {
+      scene.remove(bullet.mesh);
+      bullets.splice(i, 1);
+      continue;
+    }
+
+    if (checkBulletCannonHit(bullet)) {
       scene.remove(bullet.mesh);
       bullets.splice(i, 1);
       continue;
@@ -1023,7 +1304,7 @@ function disposeEnemy(enemy) {
   enemy.group.traverse((child) => {
     if (child.material) materials.add(child.material);
   });
-  scene.remove(enemy.group);
+  if (enemy.group.parent) enemy.group.parent.remove(enemy.group);
   materials.forEach((material) => material.dispose());
 }
 
@@ -1157,7 +1438,7 @@ function removeEnemyAt(index, explosionColor) {
 
 function killEnemyAt(index, explosionColor) {
   const enemy = enemies[index];
-  if (enemy.type === 'bat') playBatDeathSound();
+  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm') playBatDeathSound();
   removeEnemyAt(index, explosionColor);
   increaseCombo();
 }
@@ -1171,7 +1452,7 @@ function damageEnemy(enemyIndex) {
 
   enemy.hp -= 1;
   enemy.flashTimer = 0.18;
-  if (enemy.type === 'worm') {
+  if (enemy.type === 'worm' || enemy.type === 'pillarWorm') {
     for (const segment of enemy.segments) {
       segment.material.emissive.setHex(0xffeb3b);
       segment.material.emissiveIntensity = 0.8;
@@ -1182,7 +1463,7 @@ function damageEnemy(enemyIndex) {
   }
 
   if (enemy.hp <= 0) {
-    killEnemyAt(enemyIndex, enemy.type === 'worm' ? colors.worm : colors.red);
+    killEnemyAt(enemyIndex, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : colors.red);
   }
 }
 
@@ -1206,6 +1487,16 @@ function getBallColliderPositions() {
 
 function getBallEnemyContact(enemy) {
   const colliders = getBallColliderPositions();
+  if (enemy.type === 'pillarWorm') {
+    const stompRadius = enemy.collisionRadius + ballRadius * 0.8;
+    const contactRadius = enemy.collisionRadius + ballRadius * 0.48;
+    if (colliders.bottom.distanceToSquared(enemy.collisionPosition) <= stompRadius * stompRadius) return 'bottom';
+    if (colliders.top.distanceToSquared(enemy.collisionPosition) <= contactRadius * contactRadius) return 'top';
+    if (colliders.left.distanceToSquared(enemy.collisionPosition) <= contactRadius * contactRadius) return 'left';
+    if (colliders.right.distanceToSquared(enemy.collisionPosition) <= contactRadius * contactRadius) return 'right';
+    return null;
+  }
+
   if (enemy.type === 'worm') {
     const stompRadius = enemy.collisionRadius + ballRadius * 0.75;
     const contactRadius = enemy.collisionRadius + ballRadius * 0.45;
@@ -1277,7 +1568,10 @@ function checkBulletEnemyHit(bullet) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
     const hitRadius = enemy.collisionRadius + 0.12;
-    if (bullet.mesh.position.distanceToSquared(enemy.group.position) <= hitRadius * hitRadius) {
+    const collisionPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+    if (bullet.mesh.position.distanceToSquared(collisionPosition) <= hitRadius * hitRadius) {
+      if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
+      if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
       damageEnemy(i);
       return true;
     }
@@ -1285,12 +1579,177 @@ function checkBulletEnemyHit(bullet) {
   return false;
 }
 
+function getCannonWorldPosition(cannon) {
+  _cannonWorldPosition.set(0, 0.25, 0);
+  cannon.group.localToWorld(_cannonWorldPosition);
+  return _cannonWorldPosition;
+}
+
+function destroyCannon(index) {
+  const cannon = cannons[index];
+  const position = getCannonWorldPosition(cannon).clone();
+  if (cannon.group.parent) cannon.group.parent.remove(cannon.group);
+  cannon.group.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) child.material.dispose();
+  });
+  cannons.splice(index, 1);
+  spawnExplosion(position, 0xff7043, 18);
+}
+
+function damageCannon(index) {
+  const cannon = cannons[index];
+  cannon.hp -= 1;
+  cannon.flashTimer = 0.18;
+  spawnBulletImpact(getCannonWorldPosition(cannon));
+  if (cannon.hp <= 0) destroyCannon(index);
+}
+
+function checkBulletCannonHit(bullet) {
+  for (let i = cannons.length - 1; i >= 0; i -= 1) {
+    const cannon = cannons[i];
+    const position = getCannonWorldPosition(cannon);
+    if (bullet.mesh.position.distanceToSquared(position) <= 0.34 * 0.34) {
+      if (bullet.shotgunShotId && cannon.lastShotgunHitId === bullet.shotgunShotId) return false;
+      if (bullet.shotgunShotId) cannon.lastShotgunHitId = bullet.shotgunShotId;
+      damageCannon(i);
+      return true;
+    }
+  }
+  return false;
+}
+
+function getBallCannonContact(cannon) {
+  const colliders = getBallColliderPositions();
+  const position = getCannonWorldPosition(cannon);
+  const hitRadius = ballRadius + 0.22;
+  const hitRadiusSq = hitRadius * hitRadius;
+  if (colliders.bottom.distanceToSquared(position) <= hitRadiusSq) return 'bottom';
+  if (colliders.top.distanceToSquared(position) <= hitRadiusSq) return 'top';
+  if (colliders.left.distanceToSquared(position) <= hitRadiusSq) return 'left';
+  if (colliders.right.distanceToSquared(position) <= hitRadiusSq) return 'right';
+  return null;
+}
+
+function isSolidLineOfSightTile(tile) {
+  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue');
+}
+
+function getAngularDistance(a, b) {
+  let dist = Math.abs(a - b);
+  if (dist > Math.PI) dist = twoPi - dist;
+  return dist;
+}
+
+function getCannonWorldMouth(cannon) {
+  _cannonMouthWorldPosition.set(0, 0.56, 0);
+  cannon.group.localToWorld(_cannonMouthWorldPosition);
+  return _cannonMouthWorldPosition;
+}
+
+function cannonHasLineOfSight(cannon) {
+  const mouth = getCannonWorldMouth(cannon);
+  if (mouth.y >= ball.position.y - ballRadius) return false;
+
+  const cannonAngle = Math.atan2(mouth.z, mouth.x);
+  const ballAngle = Math.atan2(ball.position.z, ball.position.x);
+  if (getAngularDistance(cannonAngle, ballAngle) > 0.18) return false;
+
+  for (const platform of platforms) {
+    if (platform === cannon.platformData) continue;
+    const y = platformY(platform);
+    if (y <= mouth.y + platformThickness || y >= ball.position.y - ballRadius) continue;
+    _cannonLosPoint.set(ball.position.x, y, ball.position.z);
+    const tile = getTileAtWorldPoint(platform, _cannonLosPoint);
+    if (isSolidLineOfSightTile(tile)) return false;
+  }
+  return true;
+}
+
+function updateCannons(dt) {
+  for (let i = cannons.length - 1; i >= 0; i -= 1) {
+    const cannon = cannons[i];
+    const contact = getBallCannonContact(cannon);
+    if (contact === 'bottom' && ballVelocity < 0 && ball.position.y > getCannonWorldPosition(cannon).y) {
+      destroyCannon(i);
+      if (reloadAmmo()) {
+        spawnFloatingText(`+ ${maxAmmo}`, ball.position);
+        playReloadSound();
+      }
+      ballVelocity = Math.max(ballVelocity, stompImpulse);
+      continue;
+    }
+    if (contact) {
+      applyDamage();
+    }
+
+    const hasLos = cannonHasLineOfSight(cannon);
+
+    cannon.base.material.emissive?.setHex(0x000000);
+    cannon.base.material.emissiveIntensity = 0;
+    cannon.ring.visible = false;
+    cannon.laser.visible = false;
+
+    if (cannon.flashTimer > 0) {
+      cannon.flashTimer = Math.max(0, cannon.flashTimer - dt);
+      cannon.base.material.emissive?.setHex(0xff9800);
+      cannon.base.material.emissiveIntensity = 0.8;
+    }
+
+    if (cannon.cooldown > 0) {
+      cannon.cooldown = Math.max(0, cannon.cooldown - dt);
+      cannon.charge = 0;
+      continue;
+    }
+
+    if (cannon.laserTimer > 0) {
+      cannon.laserTimer = Math.max(0, cannon.laserTimer - dt);
+      cannon.laser.visible = true;
+      if (!cannon.damagedThisShot && Math.hypot(ball.position.x - getCannonWorldMouth(cannon).x, ball.position.z - getCannonWorldMouth(cannon).z) <= ballRadius + 0.15 && ball.position.y > _cannonMouthWorldPosition.y) {
+        applyDamage();
+        cannon.damagedThisShot = true;
+      }
+      if (cannon.laserTimer <= 0) {
+        cannon.cooldown = cannonCooldown;
+      }
+      continue;
+    }
+
+    if (!hasLos) {
+      cannon.charge = 0;
+      continue;
+    }
+
+    if (cannon.charge === 0) {
+      playCannonActivateSound();
+    }
+    cannon.charge += dt;
+    const chargeProgress = Math.min(1, cannon.charge / cannonChargeTime);
+    cannon.base.material.emissive?.setHex(0xff0000);
+    cannon.base.material.emissiveIntensity = 0.35 + Math.sin(performance.now() * 0.02) * 0.25;
+    cannon.ring.visible = true;
+    cannon.ring.scale.setScalar(Math.max(0.25, 1 - chargeProgress * 0.75));
+
+    if (cannon.charge >= cannonChargeTime) {
+      cannon.charge = 0;
+      cannon.laserTimer = 0.3;
+      cannon.damagedThisShot = false;
+      cannon.ring.visible = false;
+      cannon.laser.visible = true;
+      playCannonFireSound();
+    }
+  }
+}
+
 function updateEnemies(dt) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
-    if (enemy.type === 'worm') {
+    if (enemy.type === 'pillarWorm') {
+      enemy.localAngle += enemy.speed * enemy.direction * dt;
+      enemy.angle = enemy.localAngle;
+    } else if (enemy.type === 'worm') {
       const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
-      if (isWormAngleValid(enemy.platformData, nextAngle)) {
+      if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius)) {
         enemy.localAngle = (nextAngle + twoPi) % twoPi;
       } else {
         enemy.direction *= -1;
@@ -1314,7 +1773,7 @@ function updateEnemies(dt) {
       const flap = Math.sin(performance.now() * 0.018 + enemy.flapOffset) * 0.55;
       enemy.leftWing.rotation.z = -0.28 - flap;
       enemy.rightWing.rotation.z = 0.28 + flap;
-    } else if (enemy.type === 'worm') {
+    } else if (enemy.type === 'worm' || enemy.type === 'pillarWorm') {
       const wiggle = Math.sin(performance.now() * 0.012 + enemy.id) * 0.05;
       enemy.group.rotation.z = wiggle;
       if (enemy.flashTimer > 0) {
@@ -1333,8 +1792,8 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
-      killEnemyAt(i, enemy.type === 'worm' ? colors.worm : colors.particle);
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+      killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : colors.particle);
       if (reloadAmmo()) {
         spawnFloatingText(`+ ${maxAmmo}`, ball.position);
         playReloadSound();
@@ -1444,6 +1903,7 @@ function clearTower() {
   clearEnemiesAndParticles();
   clearCoinPickups();
   crates.length = 0;
+  cannons.length = 0;
 
   while (platforms.length) {
     const platform = platforms.pop();
@@ -1484,6 +1944,7 @@ function startLevel() {
   ball.material.color.setHex(colors.ball);
   stopInvulnerabilityMusic();
   activatePendingPowerups();
+  updateWeaponUI();
 
   const target = getLevelTarget();
   for (let i = 0; i <= target; i += 1) {
@@ -1625,6 +2086,12 @@ const _ballRightCollider = new THREE.Vector3();
 const _enemyLocalPosition = new THREE.Vector3();
 const _enemySegmentWorldPosition = new THREE.Vector3();
 const _platformUndersidePoint = new THREE.Vector3();
+const _enemyProjectedPosition = new THREE.Vector3();
+const _cannonMouthWorldPosition = new THREE.Vector3();
+const _cannonLosPoint = new THREE.Vector3();
+const _cannonWorldPosition = new THREE.Vector3();
+const _shotgunTangent = new THREE.Vector3();
+const _shotgunVelocity = new THREE.Vector3();
 
 const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
 const debugMarker = collisionDebugEnabled
@@ -1920,6 +2387,16 @@ function onPointerCancel() {
 }
 
 function onKeyDown(event) {
+  const target = event.target;
+  const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+  if (!isTyping && event.key === '1') {
+    selectWeapon('machinegun');
+    return;
+  }
+  if (!isTyping && event.key === '2') {
+    selectWeapon('shotgun');
+    return;
+  }
   if (event.key.toLowerCase() === 'p') {
     if (isGameOver) return;
     setPaused(!isPaused);
@@ -2001,7 +2478,15 @@ impulseInput.addEventListener('input', () => {
 
 fireIntervalInput.addEventListener('input', () => {
   fireInterval = Math.max(0.08, Number(fireIntervalInput.value) || defaultFireInterval);
-  if (isShooting) fireCooldown = Math.min(fireCooldown, fireInterval);
+  if (isShooting && selectedWeapon === 'machinegun') fireCooldown = Math.min(fireCooldown, fireInterval);
+});
+
+shotgunSpreadInput.addEventListener('input', () => {
+  setShotgunSpreadAngle(shotgunSpreadInput.value);
+});
+
+shotgunIntervalInput.addEventListener('input', () => {
+  setShotgunFireInterval(shotgunIntervalInput.value);
 });
 
 maxAmmoInput.addEventListener('input', () => {
@@ -2021,6 +2506,14 @@ terminalVelocityInput.addEventListener('input', () => {
 
 stompImpulseInput.addEventListener('input', () => {
   setStompImpulse(stompImpulseInput.value);
+});
+
+cannonChargeInput.addEventListener('input', () => {
+  setCannonChargeTime(cannonChargeInput.value);
+});
+
+cannonCooldownInput.addEventListener('input', () => {
+  setCannonCooldown(cannonCooldownInput.value);
 });
 
 window.addEventListener('pointerdown', onPointerDown);
@@ -2059,6 +2552,7 @@ function animate() {
     handlePlatformCollision(previousY);
     updateBullets(dt);
     updateEnemies(dt);
+    updateCannons(dt);
     updateCoinPickups(dt);
     recyclePlatforms();
     updateParticles(dt);

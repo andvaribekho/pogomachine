@@ -21,6 +21,7 @@
     </div>
     <div id="ammo-ui" aria-label="Ammo">
       <div class="ammo-label">AMMO</div>
+      <div id="weapon-indicator">Weapon: Machinegun</div>
       <div id="ammo-magazine"></div>
     </div>
     <button id="pause-button" type="button" aria-label="Open options">Options</button>
@@ -39,6 +40,14 @@
           <input id="fire-interval-input" type="number" min="0.08" max="1.5" step="0.05" />
         </label>
         <label>
+          Shotgun Spread Angle
+          <input id="shotgun-spread-input" type="number" min="0" max="25" step="0.5" />
+        </label>
+        <label>
+          Shotgun Fire Interval
+          <input id="shotgun-interval-input" type="number" min="0.1" max="3" step="0.05" />
+        </label>
+        <label>
           Total bullet count
           <input id="max-ammo-input" type="number" min="1" max="20" step="1" />
         </label>
@@ -53,6 +62,14 @@
         <label>
           Stomp impulse
           <input id="stomp-impulse-input" type="number" min="0" max="20" step="0.1" />
+        </label>
+        <label>
+          Cannon Charge Time
+          <input id="cannon-charge-input" type="number" min="0.5" max="10" step="0.1" />
+        </label>
+        <label>
+          Cannon Cooldown
+          <input id="cannon-cooldown-input" type="number" min="0" max="20" step="0.5" />
         </label>
         <button id="close-panel-button" type="button">Close</button>
       </div>
