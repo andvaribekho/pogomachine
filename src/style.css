@@ -396,6 +396,81 @@ canvas {
   transform: translateY(1px) scale(0.99);
 }
 
+#shop-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(21, 32, 43, 0.44);
+  backdrop-filter: blur(8px);
+}
+
+#shop-panel[hidden] {
+  display: none;
+}
+
+.shop-items {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.shop-item-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 14px;
+  background: #15202b;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.shop-item-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.shop-item-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.shop-item-name {
+  text-align: left;
+}
+
+.shop-item-cost {
+  font-size: 13px;
+  opacity: 0.82;
+}
+
+#close-shop-button {
+  width: 100%;
+  margin-top: 18px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 16px;
+  background: #2196f3;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#close-shop-button:active {
+  transform: translateY(1px) scale(0.99);
+}
+
 #game-over {
   position: fixed;
   inset: 0;

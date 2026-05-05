@@ -56,6 +56,13 @@ const impulseBResetLabel = document.querySelector('#impulse-b-reset-label');
 const impulseBShotgunLabel = document.querySelector('#impulse-b-shotgun-label');
 const controlAButton = document.querySelector('#control-a-btn');
 const controlBButton = document.querySelector('#control-b-btn');
+const shopPanelEl = document.querySelector('#shop-panel');
+const shopCoinsEl = document.querySelector('#shop-coins');
+const shopBulletBtn = document.querySelector('#shop-bullet');
+const shopHpBtn = document.querySelector('#shop-hp');
+const shopArmorBtn = document.querySelector('#shop-armor');
+const shopInvulnBtn = document.querySelector('#shop-invuln');
+const closeShopButton = document.querySelector('#close-shop-button');
 
 const world = new THREE.Group();
 scene.add(world);
@@ -76,6 +83,7 @@ const colors = {
   blueParticle: 0x64b5f6,
   crate: 0x9c6b30,
   worm: 0x8bc34a,
+  shop: 0xffc107,
 };
 
 const platformInnerRadius = 0.95;
@@ -124,6 +132,9 @@ let controlMode = 'A';
 let timeScale = 1;
 let damageSlowdownTimer = 0;
 const touchPointerIds = new Set();
+let shopTilePlat = null;
+let shopTileRef = null;
+let shopUsed = false;
 let isLevelComplete = false;
 let hp = maxHp;
 let coins = 0;
@@ -567,7 +578,7 @@ function getBulletLaneRadius() {
 }
 
 function isBlueTile(tile) {
-  return tile.type === 'blue' || tile.type === 'crackedBlue';
+  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop';
 }
 
 function makeCrackLine(startAngle, endAngle) {
@@ -623,15 +634,53 @@ function createPlatform(y, id, options = {}) {
     tiles.push(tile);
   }
 
-  if (!isFinal && Math.random() < 0.055) {
-    const ballAngle = 0;
-    const ballRadius = platformOuterRadius - 0.8;
-    const ballTile = tiles.find(t =>
-      t.type === 'blue' && !t.broken &&
-      angleInArc(ballAngle, t.start, t.end)
-    );
-    if (ballTile) {
-      createCrate(group, ballAngle, ballRadius);
+  if (!isFinal) {
+    for (let c = 0; c < 3; c += 1) {
+      if (Math.random() < 0.055) {
+        const crateAngle = Math.random() * twoPi;
+        const crateRadius = platformOuterRadius - 0.8;
+        const crateTile = tiles.find(t =>
+          t.type === 'blue' && !t.broken &&
+          angleInArc(crateAngle, t.start, t.end)
+        );
+        if (crateTile) {
+          createCrate(group, crateAngle, crateRadius);
+        }
+      }
+    }
+  }
+
+  if (!isFinal && !shopTilePlat && id === 3) {
+    const shopTile = tiles.find(t => t.type === 'blue' && !t.broken);
+    if (shopTile) {
+      shopTile.type = 'shop';
+      shopTile.material.color.setHex(colors.shop);
+      shopTilePlat = { id, group };
+      shopTileRef = shopTile;
+
+      const shopAngle = (shopTile.start + shopTile.end) / 2;
+      const signCanvas = document.createElement('canvas');
+      signCanvas.width = 128;
+      signCanvas.height = 64;
+      const ctx = signCanvas.getContext('2d');
+      ctx.fillStyle = '#ffc107';
+      ctx.fillRect(0, 0, 128, 64);
+      ctx.fillStyle = '#15202b';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Shop', 64, 32);
+      const signTexture = new THREE.CanvasTexture(signCanvas);
+      const signMat = new THREE.MeshStandardMaterial({ map: signTexture, roughness: 0.6 });
+      const signGeo = new THREE.PlaneGeometry(0.7, 0.35);
+      const signMesh = new THREE.Mesh(signGeo, signMat);
+      signMesh.position.set(
+        Math.cos(shopAngle) * (pillarRadius + 0.02),
+        0,
+        Math.sin(shopAngle) * (pillarRadius + 0.02)
+      );
+      signMesh.rotation.y = -shopAngle + Math.PI / 2;
+      group.add(signMesh);
     }
   }
 
@@ -1200,6 +1249,7 @@ function setPaused(paused) {
 
 function stopShooting() {
   isShooting = false;
+  fireCooldown = 0;
 }
 
 function clearBullets() {
@@ -1984,6 +2034,9 @@ function startLevel() {
   shakeIntensity = 0;
   shakeDecay = 0;
   invulnerabilityTimer = 0;
+  shopTilePlat = null;
+  shopTileRef = null;
+  shopUsed = false;
   scoreEl.textContent = String(score);
   updateLevelUI();
   gameOverEl.hidden = true;
@@ -2108,6 +2161,75 @@ function activatePendingPowerups() {
     hasShield = true;
     shieldMesh.visible = true;
   }
+}
+
+function updateShopUI() {
+  shopCoinsEl.textContent = `${coins} coins`;
+  shopBulletBtn.disabled = coins < 5;
+  shopHpBtn.disabled = coins < 20 || hp >= maxHp;
+  shopArmorBtn.disabled = coins < 20 || hasShield;
+  shopInvulnBtn.disabled = coins < 30 || invulnerabilityTimer > 0;
+}
+
+function openShop() {
+  shopUsed = true;
+  isPaused = true;
+  stopShooting();
+  shopPanelEl.hidden = false;
+  updateShopUI();
+}
+
+function closeShop() {
+  shopPanelEl.hidden = true;
+  isPaused = false;
+  if (shopTileRef) {
+    shopTileRef.type = 'blue';
+    shopTileRef.material.color.setHex(colors.blue);
+    shopTileRef = null;
+  }
+  shopTilePlat = null;
+}
+
+function buyShopBullet() {
+  if (coins < 5) return;
+  coins -= 5;
+  maxAmmo += 1;
+  ammo = maxAmmo;
+  rebuildAmmoUI();
+  syncOptionsPanel();
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
+function buyShopHp() {
+  if (coins < 20 || hp >= maxHp) return;
+  coins -= 20;
+  hp += 1;
+  updateHeartsUI();
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
+function buyShopArmor() {
+  if (coins < 20 || hasShield) return;
+  coins -= 20;
+  hasShield = true;
+  shieldMesh.visible = true;
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
+function buyShopInvuln() {
+  if (coins < 30 || invulnerabilityTimer > 0) return;
+  coins -= 30;
+  invulnerabilityTimer = 10;
+  startInvulnerabilityMusic();
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
 }
 
 function updateLevelCompleteUI() {
@@ -2332,6 +2454,20 @@ function handlePlatformCollision(previousY) {
       return;
     }
 
+    if (contact.tile.type === 'shop' && !shopUsed) {
+      ball.position.y = platformTop + ballRadius;
+      ballVelocity = bounceVelocity;
+      resetCombo();
+      if (reloadAmmo()) {
+        spawnFloatingText('Reload', ball.position);
+        playReloadSound();
+      }
+      playBounceSound();
+      contact.tile.flashTimer = 0.3;
+      openShop();
+      return;
+    }
+
     ball.position.y = platformTop + ballRadius;
     ballVelocity = bounceVelocity;
     resetCombo();
@@ -2404,14 +2540,15 @@ function updateTileFlashes(dt) {
     for (const tile of platform.tiles) {
       if (!isBlueTile(tile) || tile.broken) continue;
 
+      const baseColor = tile.type === 'shop' ? colors.shop : colors.blue;
       if (tile.flashTimer > 0) {
         tile.flashTimer = Math.max(0, tile.flashTimer - dt);
         const t = tile.flashTimer / 0.3;
-        _flashA.setHex(colors.blue);
+        _flashA.setHex(baseColor);
         _flashB.setHex(colors.blueFlash);
         tile.mesh.material.color.copy(_flashA.lerp(_flashB, t));
       } else {
-        tile.mesh.material.color.setHex(colors.blue);
+        tile.mesh.material.color.setHex(baseColor);
       }
     }
   }
@@ -2604,6 +2741,15 @@ controlBButton.addEventListener('click', () => {
   controlAButton.classList.remove('active');
   touchPointerIds.clear();
   stopShooting();
+});
+
+shopBulletBtn.addEventListener('click', buyShopBullet);
+shopHpBtn.addEventListener('click', buyShopHp);
+shopArmorBtn.addEventListener('click', buyShopArmor);
+shopInvulnBtn.addEventListener('click', buyShopInvuln);
+closeShopButton.addEventListener('click', closeShop);
+shopPanelEl.addEventListener('pointerdown', (event) => {
+  event.stopPropagation();
 });
 
 levelCompleteEl.addEventListener('pointerdown', (event) => {
