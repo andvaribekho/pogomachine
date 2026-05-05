@@ -56,7 +56,6 @@ const colors = {
   particle: 0xffe082,
   blueParticle: 0x64b5f6,
   crate: 0x9c6b30,
-  worm: 0x8bc34a,
 };
 
 const platformInnerRadius = 0.95;
@@ -148,13 +147,7 @@ const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roug
 const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
 const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
 const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
-const wormSegmentGeometry = new THREE.SphereGeometry(0.16, 12, 8);
-const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.1 });
-const wormHeadGeometry = new THREE.SphereGeometry(0.2, 12, 8);
 const shieldMaterial = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x00bcd4, emissiveIntensity: 0.35 });
-const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x37474f, roughness: 0.65, metalness: 0.2 });
-const wallHeight = 3.0;
-const wallRadialWidth = 0.18;
 
 const shieldMesh = new THREE.Mesh(shieldGeometry, shieldMaterial);
 shieldMesh.visible = false;
@@ -467,6 +460,14 @@ function angleInArc(angle, start, end) {
   return angle >= start || angle <= end;
 }
 
+function getBulletLaneAngle() {
+  return Math.atan2(ball.position.z, ball.position.x);
+}
+
+function getBulletLaneRadius() {
+  return Math.hypot(ball.position.x, ball.position.z);
+}
+
 function isBlueTile(tile) {
   return tile.type === 'blue' || tile.type === 'crackedBlue';
 }
@@ -524,65 +525,23 @@ function createPlatform(y, id, options = {}) {
     tiles.push(tile);
   }
 
-  if (!isFinal && Math.random() < 0.11) {
-    const blueTiles = tiles.filter(t => t.type === 'blue' && !t.broken);
-    if (blueTiles.length > 0) {
-      const ballAngleTarget = 0;
-      let bestTile = blueTiles[0];
-      let bestDist = Infinity;
-      for (const bt of blueTiles) {
-        const tileAngle = ((bt.start + bt.end) / 2 + twoPi) % twoPi;
-        let dist = Math.abs(tileAngle - ballAngleTarget);
-        if (dist > Math.PI) dist = twoPi - dist;
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestTile = bt;
-        }
-      }
-      const crateAngle = (bestTile.start + bestTile.end) / 2;
-      createCrate(group, crateAngle, platformOuterRadius - 0.8);
+  if (!isFinal && Math.random() < 0.055) {
+    const ballAngle = 0;
+    const ballRadius = platformOuterRadius - 0.8;
+    const ballTile = tiles.find(t =>
+      t.type === 'blue' && !t.broken &&
+      angleInArc(ballAngle, t.start, t.end)
+    );
+    if (ballTile) {
+      createCrate(group, ballAngle, ballRadius);
     }
   }
 
   world.add(group);
-  const platData = { id, group, tiles, scored: false, final: isFinal, wallAngle: null, wallLastSide: 0 };
+  const platData = { id, group, tiles, scored: false, final: isFinal };
   platforms.push(platData);
 
-  if (!isFinal && id > 2 && Math.random() < 0.3) {
-    const blueTiles = tiles.filter(t => t.type === 'blue' && !t.broken);
-    if (blueTiles.length > 0) {
-      const playerAngle = ((-world.rotation.y) % twoPi + twoPi) % twoPi;
-      let bestTile = blueTiles[0];
-      let bestDist = Infinity;
-      for (const bt of blueTiles) {
-        const tileAngle = ((bt.start + bt.end) / 2 + twoPi) % twoPi;
-        let dist = Math.abs(tileAngle - playerAngle);
-        if (dist > Math.PI) dist = twoPi - dist;
-        if (dist < bestDist && dist > 0.3) {
-          bestDist = dist;
-          bestTile = bt;
-        }
-      }
-      const wallAng = ((bestTile.start + bestTile.end) / 2 + twoPi) % twoPi;
-      platData.wallAngle = wallAng;
-
-      const wallGroup = new THREE.Group();
-      wallGroup.position.y = platformThickness / 2 + wallHeight / 2;
-      wallGroup.rotation.y = wallAng;
-      const wallLength = platformOuterRadius - platformInnerRadius + 0.1;
-      const wallCenterR = (platformInnerRadius + platformOuterRadius) / 2;
-      const wallMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(wallRadialWidth, wallHeight, wallLength),
-        wallMaterial
-      );
-      wallMesh.position.set(0, 0, wallCenterR);
-      wallMesh.castShadow = true;
-      wallGroup.add(wallMesh);
-      group.add(wallGroup);
-    }
-  }
-
-  if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
+  if (!isFinal) maybeSpawnEnemiesForSection(y, id);
 }
 
 function createCrate(platformGroup, angle, radius) {
@@ -652,8 +611,8 @@ function positionEnemy(enemy) {
 
 function createBat(y, id) {
   const bat = createBatMesh();
-  const arcSpan = 1.8 + Math.random() * 0.6;
-  const arcCenter = drag.targetRotation + Math.PI / 2;
+  const arcSpan = 1.05 + Math.random() * 0.25;
+  const arcCenter = getBulletLaneAngle();
   const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
   const enemy = {
     type: 'bat',
@@ -666,7 +625,7 @@ function createBat(y, id) {
     arcCenter,
     arcSpan,
     direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: platformOuterRadius - 0.8 + (Math.random() - 0.5) * 0.4,
+    orbitRadius: getBulletLaneRadius(),
     speed: 0.55 + Math.random() * 0.75,
     collisionRadius: 0.35,
     flapOffset: Math.random() * twoPi,
@@ -678,8 +637,8 @@ function createBat(y, id) {
 
 function createSpikedBall(y, id) {
   const spike = createSpikedBallMesh();
-  const arcSpan = 1.5 + Math.random() * 0.5;
-  const arcCenter = drag.targetRotation + Math.PI / 2;
+  const arcSpan = 0.9 + Math.random() * 0.25;
+  const arcCenter = getBulletLaneAngle();
   const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
   const enemy = {
     type: 'spike',
@@ -691,7 +650,7 @@ function createSpikedBall(y, id) {
     arcCenter,
     arcSpan,
     direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: platformOuterRadius - 0.8 + (Math.random() - 0.5) * 0.4,
+    orbitRadius: getBulletLaneRadius(),
     speed: 0.2 + Math.random() * 0.35,
     collisionRadius: 0.43,
     hp: 3,
@@ -702,69 +661,13 @@ function createSpikedBall(y, id) {
   enemies.push(enemy);
 }
 
-function createWormMesh() {
-  const group = new THREE.Group();
-  const segments = [];
-  for (let i = 0; i < 4; i += 1) {
-    const geo = i === 0 ? wormHeadGeometry : wormSegmentGeometry;
-    const mesh = new THREE.Mesh(geo, wormMaterial.clone());
-    mesh.position.x = -i * 0.28;
-    mesh.position.y = 0.16;
-    mesh.scale.y = 0.7;
-    group.add(mesh);
-    segments.push(mesh);
-  }
-  return { group, segments };
-}
-
-function createWorm(platformData, id) {
-  const worm = createWormMesh();
-  const radius = platformOuterRadius - 0.8;
-  const startAngle = 0;
-  const enemy = {
-    type: 'worm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.01,
-    angle: startAngle,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    speed: 0.6 + Math.random() * 0.5,
-    collisionRadius: 0.3,
-    radius,
-  };
-  enemy.group.position.set(
-    Math.cos(startAngle) * radius,
-    enemy.y,
-    Math.sin(startAngle) * radius
-  );
-  enemy.group.rotation.y = -startAngle + Math.PI / 2;
-  scene.add(enemy.group);
-  enemies.push(enemy);
-}
-
-function isWormOnValidTile(enemy) {
-  const localAngle = ((-world.rotation.y - enemy.angle) % twoPi + twoPi) % twoPi;
-  for (const tile of enemy.platformData.tiles) {
-    if (tile.broken) continue;
-    if (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue' || tile.type === 'finish') {
-      if (angleInArc(localAngle, tile.start, tile.end)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function maybeSpawnEnemiesForSection(platformData, id) {
+function maybeSpawnEnemiesForSection(platformYValue, id) {
   if (id < 5) return;
 
   const difficulty = Math.min(id / 24, 1);
-  const sectionY = platformData.group.position.y + platformSpacing * (0.38 + Math.random() * 0.22);
+  const sectionY = platformYValue + platformSpacing * (0.38 + Math.random() * 0.22);
   const batChance = Math.min(0.08 + difficulty * 0.38, 0.55);
   const spikeChance = id > 10 ? Math.min((difficulty - 0.35) * 0.28, 0.22) : 0;
-  const wormChance = id > 6 ? Math.min(0.15 + difficulty * 0.25, 0.4) : 0;
 
   if (Math.random() < batChance) {
     createBat(sectionY, id);
@@ -772,10 +675,6 @@ function maybeSpawnEnemiesForSection(platformData, id) {
 
   if (Math.random() < spikeChance) {
     createSpikedBall(sectionY - 0.9 + Math.random() * 1.8, id);
-  }
-
-  if (Math.random() < wormChance) {
-    createWorm(platformData, id);
   }
 }
 
@@ -1045,35 +944,29 @@ function breakCrate(crateIndex, byBullet = false) {
 }
 
 function spawnCoinPickup(worldPos) {
-  const localPos = worldPos.clone();
-  world.worldToLocal(localPos);
   const mesh = new THREE.Mesh(coinPickupGeometry, coinPickupMaterial);
-  mesh.position.copy(localPos);
+  mesh.position.copy(worldPos);
   mesh.position.y += 0.1;
-  world.add(mesh);
+  scene.add(mesh);
   coinPickups.push({ mesh, value: 5, collected: false });
 }
 
 function updateCoinPickups(dt) {
-  const ballLocal = ball.position.clone();
-  world.worldToLocal(ballLocal);
   for (let i = coinPickups.length - 1; i >= 0; i -= 1) {
     const pickup = coinPickups[i];
     if (pickup.collected) continue;
     pickup.mesh.rotation.y += dt * 3;
     pickup.mesh.position.y += Math.sin(performance.now() * 0.004 + i) * 0.002;
 
-    const dx = ballLocal.x - pickup.mesh.position.x;
-    const dy = ballLocal.y - pickup.mesh.position.y;
-    const dz = ballLocal.z - pickup.mesh.position.z;
+    const dx = ball.position.x - pickup.mesh.position.x;
+    const dy = ball.position.y - pickup.mesh.position.y;
+    const dz = ball.position.z - pickup.mesh.position.z;
     if (dx * dx + dy * dy + dz * dz <= (ballRadius + 0.25) * (ballRadius + 0.25)) {
       pickup.collected = true;
       coins += pickup.value;
       updateCoinsUI();
-      const worldPos = pickup.mesh.position.clone();
-      world.localToWorld(worldPos);
-      spawnCoinPickupAnimation(worldPos);
-      world.remove(pickup.mesh);
+      spawnCoinPickupAnimation(pickup.mesh.position);
+      scene.remove(pickup.mesh);
       pickup.mesh.geometry.dispose();
       coinPickups.splice(i, 1);
     }
@@ -1083,7 +976,7 @@ function updateCoinPickups(dt) {
 function clearCoinPickups() {
   while (coinPickups.length) {
     const pickup = coinPickups.pop();
-    world.remove(pickup.mesh);
+    scene.remove(pickup.mesh);
     pickup.mesh.geometry.dispose();
   }
 }
@@ -1128,7 +1021,7 @@ function removeEnemyAt(index, explosionColor) {
 
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
-  if (enemy.type === 'bat' || enemy.type === 'worm') {
+  if (enemy.type === 'bat') {
     playBatDeathSound();
     removeEnemyAt(enemyIndex, colors.particle);
     return;
@@ -1866,22 +1759,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.033);
 
   if (!isPaused) {
-    let clampedTarget = drag.targetRotation;
-    for (const platform of platforms) {
-      if (platform.wallAngle !== null) {
-        const platTop = platform.group.position.y + platformThickness / 2;
-        if (Math.abs(ball.position.y - platTop) < 3) {
-          const wallLimit = -platform.wallAngle;
-          const currentSign = Math.sign(world.rotation.y - wallLimit);
-          const targetSign = Math.sign(clampedTarget - wallLimit);
-          if (currentSign !== 0 && targetSign !== 0 && currentSign !== targetSign) {
-            clampedTarget = wallLimit;
-          }
-        }
-      }
-    }
-    drag.targetRotation = clampedTarget;
-    world.rotation.y += (clampedTarget - world.rotation.y) * 0.22;
+    world.rotation.y += (drag.targetRotation - world.rotation.y) * 0.22;
   }
 
   if (!isGameOver && !isPaused && !isLevelComplete) {
