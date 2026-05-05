@@ -8,6 +8,11 @@
   <body>
     <div id="ui">
       <div id="score">0</div>
+      <div id="level-progress">
+        <div id="level-label">Level 1</div>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+        <div id="progress-label">0 / 20</div>
+      </div>
       <div id="hint">Drag to rotate, release to shoot</div>
     </div>
     <div id="ammo-ui" aria-label="Ammo">
@@ -33,6 +38,7 @@
           Total bullet count
           <input id="max-ammo-input" type="number" min="1" max="12" step="1" />
         </label>
+        <button id="close-panel-button" type="button">Close</button>
       </div>
     </div>
     <div id="game-over" hidden>

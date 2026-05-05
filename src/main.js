@@ -15,11 +15,15 @@ renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scoreEl = document.querySelector('#score');
+const levelLabelEl = document.querySelector('#level-label');
+const progressFillEl = document.querySelector('#progress-fill');
+const progressLabelEl = document.querySelector('#progress-label');
 const gameOverEl = document.querySelector('#game-over');
 const finalScoreEl = document.querySelector('#final-score');
 const ammoMagazineEl = document.querySelector('#ammo-magazine');
 const pauseButton = document.querySelector('#pause-button');
 const pausePanelEl = document.querySelector('#pause-panel');
+const closePanelButton = document.querySelector('#close-panel-button');
 const impulseInput = document.querySelector('#impulse-input');
 const fireIntervalInput = document.querySelector('#fire-interval-input');
 const maxAmmoInput = document.querySelector('#max-ammo-input');
@@ -246,6 +250,27 @@ function playReloadSound() {
     chingGain.connect(ctx.destination);
     ching.start(now + 0.045);
     ching.stop(now + 0.42);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playBatDeathSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1250, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.18);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.linearRampToValueAtTime(0.24, now + 0.035);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
   } catch (_) {
     /* silent */
   }
@@ -533,6 +558,21 @@ function syncOptionsPanel() {
   maxAmmoInput.value = String(maxAmmo);
 }
 
+function getLevelInfo() {
+  const level = score < 20 ? 1 : Math.floor((score - 20) / 10) + 2;
+  const start = level === 1 ? 0 : 20 + (level - 2) * 10;
+  const target = level === 1 ? 20 : 20 + (level - 1) * 10;
+  const progress = THREE.MathUtils.clamp((score - start) / (target - start), 0, 1);
+  return { level, start, target, progress };
+}
+
+function updateLevelUI() {
+  const levelInfo = getLevelInfo();
+  levelLabelEl.textContent = `Level ${levelInfo.level}`;
+  progressLabelEl.textContent = `${score} / ${levelInfo.target}`;
+  progressFillEl.style.width = `${levelInfo.progress * 100}%`;
+}
+
 function setPaused(paused) {
   isPaused = paused;
   pausePanelEl.hidden = !paused;
@@ -705,6 +745,7 @@ function removeEnemyAt(index, explosionColor) {
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
   if (enemy.type === 'bat') {
+    playBatDeathSound();
     removeEnemyAt(enemyIndex, colors.particle);
     return;
   }
@@ -874,6 +915,7 @@ function resetGame() {
   shakeIntensity = 0;
   shakeDecay = 0;
   scoreEl.textContent = '0';
+  updateLevelUI();
   gameOverEl.hidden = true;
 
   for (let i = 0; i < platformCount; i += 1) {
@@ -1063,6 +1105,7 @@ function recyclePlatforms() {
       platform.scored = true;
       score += 1;
       scoreEl.textContent = String(score);
+      updateLevelUI();
       gravity = -14 - Math.min(score * 0.08, 3.5);
       bounceVelocity = 7.7 + Math.min(score * 0.025, 0.8);
     }
@@ -1168,6 +1211,15 @@ pauseButton.addEventListener('click', (event) => {
   event.stopPropagation();
   if (isGameOver) return;
   setPaused(!isPaused);
+});
+
+closePanelButton.addEventListener('pointerdown', (event) => {
+  event.stopPropagation();
+});
+
+closePanelButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setPaused(false);
 });
 
 impulseInput.addEventListener('input', () => {
