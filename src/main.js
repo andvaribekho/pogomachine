@@ -29,6 +29,9 @@ const closePanelButton = document.querySelector('#close-panel-button');
 const impulseInput = document.querySelector('#impulse-input');
 const fireIntervalInput = document.querySelector('#fire-interval-input');
 const maxAmmoInput = document.querySelector('#max-ammo-input');
+const gravityInput = document.querySelector('#gravity-input');
+const terminalVelocityInput = document.querySelector('#terminal-velocity-input');
+const stompImpulseInput = document.querySelector('#stomp-impulse-input');
 const levelCompleteEl = document.querySelector('#level-complete');
 const completeSummaryEl = document.querySelector('#complete-summary');
 const rewardHpButton = document.querySelector('#reward-hp');
@@ -56,6 +59,7 @@ const colors = {
   particle: 0xffe082,
   blueParticle: 0x64b5f6,
   crate: 0x9c6b30,
+  worm: 0x8bc34a,
 };
 
 const platformInnerRadius = 0.95;
@@ -68,6 +72,9 @@ const collisionDebugEnabled = new URLSearchParams(window.location.search).has('d
 const defaultMaxAmmo = 5;
 const defaultFireInterval = 0.3;
 const defaultBulletImpulse = 4.3;
+const defaultGravity = -14;
+const defaultTerminalVelocity = 28;
+const defaultStompImpulse = 5.4;
 const maxHp = 3;
 const invulnerabilityCost = 20;
 const shieldCost = 20;
@@ -77,7 +84,9 @@ const baseShotUpwardVelocityCap = 2.4;
 
 const ballStartY = 1.9;
 let ballVelocity = 0;
-let gravity = -14;
+let gravity = defaultGravity;
+let terminalVelocity = defaultTerminalVelocity;
+let stompImpulse = defaultStompImpulse;
 let bounceVelocity = 7.7;
 let score = 0;
 let currentLevel = 1;
@@ -141,6 +150,8 @@ const spikeBodyGeometry = new THREE.SphereGeometry(0.28, 20, 14);
 const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
 const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
 const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
+const wormHeadGeometry = new THREE.SphereGeometry(0.18, 14, 10);
+const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
 const coinPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xb8860b, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.7 });
 const shieldGeometry = new THREE.BoxGeometry(0.42, 0.14, 0.42);
@@ -148,6 +159,8 @@ const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roug
 const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
 const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
 const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
+const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
+const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
 const shieldMaterial = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x00bcd4, emissiveIntensity: 0.35 });
 
 const shieldMesh = new THREE.Mesh(shieldGeometry, shieldMaterial);
@@ -542,7 +555,7 @@ function createPlatform(y, id, options = {}) {
   const platData = { id, group, tiles, scored: false, final: isFinal };
   platforms.push(platData);
 
-  if (!isFinal) maybeSpawnEnemiesForSection(y, id);
+  if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
 }
 
 function createCrate(platformGroup, angle, radius) {
@@ -601,7 +614,35 @@ function createSpikedBallMesh() {
   return { group, material };
 }
 
+function createWormMesh() {
+  const group = new THREE.Group();
+  const segments = [];
+  for (let i = 0; i < 4; i += 1) {
+    const geometry = i === 0 ? wormHeadGeometry : wormSegmentGeometry;
+    const material = i === 0 ? wormHeadMaterial.clone() : wormMaterial.clone();
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.x = -i * 0.24;
+    mesh.scale.y = 0.62;
+    mesh.castShadow = true;
+    group.add(mesh);
+    segments.push(mesh);
+  }
+  return { group, segments };
+}
+
 function positionEnemy(enemy) {
+  if (enemy.type === 'worm') {
+    const localPosition = _enemyLocalPosition.set(
+      Math.cos(enemy.localAngle) * enemy.orbitRadius,
+      platformThickness / 2 + 0.2,
+      Math.sin(enemy.localAngle) * enemy.orbitRadius
+    );
+    enemy.platformData.group.localToWorld(localPosition);
+    enemy.group.position.copy(localPosition);
+    enemy.group.rotation.y = world.rotation.y - enemy.localAngle + Math.PI / 2;
+    return;
+  }
+
   enemy.group.position.set(
     Math.cos(enemy.angle) * enemy.orbitRadius,
     enemy.y,
@@ -662,21 +703,73 @@ function createSpikedBall(y, id) {
   enemies.push(enemy);
 }
 
-function maybeSpawnEnemiesForSection(platformYValue, id) {
+function isWormTile(tile) {
+  return !tile.broken && (tile.type === 'blue' || tile.type === 'red');
+}
+
+function isWormAngleValid(platformData, angle) {
+  return platformData.tiles.some(tile => isWormTile(tile) && angleInArc((angle + twoPi) % twoPi, tile.start, tile.end));
+}
+
+function createWorm(platformData, id, tile) {
+  const worm = createWormMesh();
+  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
+  const enemy = {
+    type: 'worm',
+    id,
+    group: worm.group,
+    segments: worm.segments,
+    platformData,
+    y: platformData.group.position.y + platformThickness / 2 + 0.2,
+    localAngle: start,
+    angle: start,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: (platformInnerRadius + platformOuterRadius) / 2 + (Math.random() - 0.5) * 0.35,
+    speed: 0.45 + Math.random() * 0.45,
+    collisionRadius: 0.34,
+    hp: 3,
+    flashTimer: 0,
+  };
+  positionEnemy(enemy);
+  scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
+function maybeSpawnWorms(platformData, id) {
+  if (id < 6 || platformData.final) return;
+  const validTiles = platformData.tiles.filter(isWormTile);
+  if (validTiles.length === 0) return;
+
+  const difficulty = Math.min(id / 24, 1);
+  const maxWorms = Math.min(3, validTiles.length);
+  const wormCount = Math.min(maxWorms, Math.floor(Math.random() * 4));
+  const shuffled = [...validTiles].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < wormCount; i += 1) {
+    if (Math.random() < 0.35 + difficulty * 0.35) createWorm(platformData, id, shuffled[i]);
+  }
+}
+
+function maybeSpawnEnemiesForSection(platformData, id) {
   if (id < 5) return;
 
   const difficulty = Math.min(id / 24, 1);
+  const platformYValue = platformData.group.position.y;
   const sectionY = platformYValue + platformSpacing * (0.38 + Math.random() * 0.22);
   const batChance = Math.min(0.08 + difficulty * 0.38, 0.55);
   const spikeChance = id > 10 ? Math.min((difficulty - 0.35) * 0.28, 0.22) : 0;
 
-  if (Math.random() < batChance) {
-    createBat(sectionY, id);
+  for (let i = 0; i < 2; i += 1) {
+    if (Math.random() < batChance) {
+      const offset = (i - 0.5) * 0.9 + (Math.random() - 0.5) * 0.35;
+      createBat(sectionY + offset, id);
+    }
   }
 
   if (Math.random() < spikeChance) {
     createSpikedBall(sectionY - 0.9 + Math.random() * 1.8, id);
   }
+
+  maybeSpawnWorms(platformData, id);
 }
 
 function rebuildAmmoUI() {
@@ -727,6 +820,30 @@ function setShootingImpulse(value) {
   impulseInput.value = bulletImpulse.toFixed(1);
 }
 
+function setGravity(value) {
+  const nextValue = Number.parseFloat(value);
+  gravity = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, -40, 0)
+    : defaultGravity;
+  gravityInput.value = gravity.toFixed(1);
+}
+
+function setTerminalVelocity(value) {
+  const nextValue = Number.parseFloat(value);
+  terminalVelocity = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(Math.abs(nextValue), 1, 80)
+    : defaultTerminalVelocity;
+  terminalVelocityInput.value = terminalVelocity.toFixed(1);
+}
+
+function setStompImpulse(value) {
+  const nextValue = Number.parseFloat(value);
+  stompImpulse = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0, 20)
+    : defaultStompImpulse;
+  stompImpulseInput.value = stompImpulse.toFixed(1);
+}
+
 function getShotUpwardVelocityCap() {
   return Math.max(baseShotUpwardVelocityCap, bulletImpulse * 0.75);
 }
@@ -735,6 +852,9 @@ function syncOptionsPanel() {
   impulseInput.value = bulletImpulse.toFixed(1);
   fireIntervalInput.value = fireInterval.toFixed(2);
   maxAmmoInput.value = String(maxAmmo);
+  gravityInput.value = gravity.toFixed(1);
+  terminalVelocityInput.value = terminalVelocity.toFixed(1);
+  stompImpulseInput.value = stompImpulse.toFixed(1);
 }
 
 function getLevelTarget(level = currentLevel) {
@@ -1051,11 +1171,18 @@ function damageEnemy(enemyIndex) {
 
   enemy.hp -= 1;
   enemy.flashTimer = 0.18;
-  enemy.material.emissive.setHex(0xff0000);
-  enemy.material.emissiveIntensity = 0.9;
+  if (enemy.type === 'worm') {
+    for (const segment of enemy.segments) {
+      segment.material.emissive.setHex(0xffeb3b);
+      segment.material.emissiveIntensity = 0.8;
+    }
+  } else {
+    enemy.material.emissive.setHex(0xff0000);
+    enemy.material.emissiveIntensity = 0.9;
+  }
 
   if (enemy.hp <= 0) {
-    killEnemyAt(enemyIndex, colors.red);
+    killEnemyAt(enemyIndex, enemy.type === 'worm' ? colors.worm : colors.red);
   }
 }
 
@@ -1079,6 +1206,22 @@ function getBallColliderPositions() {
 
 function getBallEnemyContact(enemy) {
   const colliders = getBallColliderPositions();
+  if (enemy.type === 'worm') {
+    const stompRadius = enemy.collisionRadius + ballRadius * 0.75;
+    const contactRadius = enemy.collisionRadius + ballRadius * 0.45;
+    for (const segment of enemy.segments) {
+      segment.getWorldPosition(_enemySegmentWorldPosition);
+      if (colliders.bottom.distanceToSquared(_enemySegmentWorldPosition) <= stompRadius * stompRadius) return 'bottom';
+    }
+    for (const segment of enemy.segments) {
+      segment.getWorldPosition(_enemySegmentWorldPosition);
+      if (colliders.top.distanceToSquared(_enemySegmentWorldPosition) <= contactRadius * contactRadius) return 'top';
+      if (colliders.left.distanceToSquared(_enemySegmentWorldPosition) <= contactRadius * contactRadius) return 'left';
+      if (colliders.right.distanceToSquared(_enemySegmentWorldPosition) <= contactRadius * contactRadius) return 'right';
+    }
+    return null;
+  }
+
   const hitRadius = enemy.collisionRadius + ballRadius * 0.42;
   const hitRadiusSq = hitRadius * hitRadius;
 
@@ -1145,15 +1288,25 @@ function checkBulletEnemyHit(bullet) {
 function updateEnemies(dt) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
-    const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
-    const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
-    enemy.angle += enemy.speed * enemy.direction * dt;
-    if (enemy.angle >= arcMax) {
-      enemy.angle = arcMax;
-      enemy.direction = -1;
-    } else if (enemy.angle <= arcMin) {
-      enemy.angle = arcMin;
-      enemy.direction = 1;
+    if (enemy.type === 'worm') {
+      const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
+      if (isWormAngleValid(enemy.platformData, nextAngle)) {
+        enemy.localAngle = (nextAngle + twoPi) % twoPi;
+      } else {
+        enemy.direction *= -1;
+      }
+      enemy.angle = enemy.localAngle;
+    } else {
+      const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
+      const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
+      enemy.angle += enemy.speed * enemy.direction * dt;
+      if (enemy.angle >= arcMax) {
+        enemy.angle = arcMax;
+        enemy.direction = -1;
+      } else if (enemy.angle <= arcMin) {
+        enemy.angle = arcMin;
+        enemy.direction = 1;
+      }
     }
     positionEnemy(enemy);
 
@@ -1161,6 +1314,14 @@ function updateEnemies(dt) {
       const flap = Math.sin(performance.now() * 0.018 + enemy.flapOffset) * 0.55;
       enemy.leftWing.rotation.z = -0.28 - flap;
       enemy.rightWing.rotation.z = 0.28 + flap;
+    } else if (enemy.type === 'worm') {
+      const wiggle = Math.sin(performance.now() * 0.012 + enemy.id) * 0.05;
+      enemy.group.rotation.z = wiggle;
+      if (enemy.flashTimer > 0) {
+        enemy.flashTimer -= dt;
+      } else {
+        for (const segment of enemy.segments) segment.material.emissiveIntensity = 0;
+      }
     } else {
       enemy.group.rotation.x += dt * 1.1;
       enemy.group.rotation.z += dt * 0.8;
@@ -1172,13 +1333,13 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && enemy.type === 'bat' && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
-      killEnemyAt(i, colors.particle);
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+      killEnemyAt(i, enemy.type === 'worm' ? colors.worm : colors.particle);
       if (reloadAmmo()) {
         spawnFloatingText(`+ ${maxAmmo}`, ball.position);
         playReloadSound();
       }
-      ballVelocity = Math.max(ballVelocity, bounceVelocity * 0.7);
+      ballVelocity = Math.max(ballVelocity, stompImpulse);
       continue;
     }
 
@@ -1301,7 +1462,6 @@ function startLevel() {
   ballVelocity = 0;
   platformsPassedThisLevel = 0;
   nextPlatformId = 0;
-  gravity = -14;
   bounceVelocity = 7.7;
   world.rotation.y = 0;
   drag.targetRotation = 0;
@@ -1462,6 +1622,9 @@ const _ballBottomCollider = new THREE.Vector3();
 const _ballTopCollider = new THREE.Vector3();
 const _ballLeftCollider = new THREE.Vector3();
 const _ballRightCollider = new THREE.Vector3();
+const _enemyLocalPosition = new THREE.Vector3();
+const _enemySegmentWorldPosition = new THREE.Vector3();
+const _platformUndersidePoint = new THREE.Vector3();
 
 const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
 const debugMarker = collisionDebugEnabled
@@ -1568,6 +1731,37 @@ function getBallContactOnPlatform(platform) {
   return { angle, radius, tile, localX: _ballLocal.x, localZ: _ballLocal.z };
 }
 
+function isSolidUndersideTile(tile) {
+  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'red');
+}
+
+function handlePlatformUndersideCollision(previousY) {
+  if (ballVelocity <= 0) return;
+
+  const topBefore = previousY + ballRadius;
+  const topNow = ball.position.y + ballRadius;
+  const crossedPlatforms = [];
+
+  for (const platform of platforms) {
+    const platformBottom = platformY(platform) - platformThickness / 2;
+    if (topBefore <= platformBottom && topNow >= platformBottom) {
+      crossedPlatforms.push({ platform, platformBottom });
+    }
+  }
+
+  crossedPlatforms.sort((a, b) => a.platformBottom - b.platformBottom);
+
+  for (const collision of crossedPlatforms) {
+    _platformUndersidePoint.set(ball.position.x, collision.platformBottom - 0.035, ball.position.z);
+    const tile = getTileAtWorldPoint(collision.platform, _platformUndersidePoint);
+    if (!isSolidUndersideTile(tile)) continue;
+
+    ball.position.y = collision.platformBottom - ballRadius;
+    ballVelocity = -Math.max(1.2, bounceVelocity * 0.22);
+    return;
+  }
+}
+
 function handlePlatformCollision(previousY) {
   if (ballVelocity >= 0) return;
 
@@ -1639,7 +1833,6 @@ function recyclePlatforms() {
       }
       scoreEl.textContent = String(score);
       updateLevelUI();
-      gravity = -14 - Math.min(score * 0.08, 3.5);
       bounceVelocity = 7.7 + Math.min(score * 0.025, 0.8);
     }
 
@@ -1818,6 +2011,18 @@ maxAmmoInput.addEventListener('input', () => {
   maxAmmoInput.value = String(maxAmmo);
 });
 
+gravityInput.addEventListener('input', () => {
+  setGravity(gravityInput.value);
+});
+
+terminalVelocityInput.addEventListener('input', () => {
+  setTerminalVelocity(terminalVelocityInput.value);
+});
+
+stompImpulseInput.addEventListener('input', () => {
+  setStompImpulse(stompImpulseInput.value);
+});
+
 window.addEventListener('pointerdown', onPointerDown);
 window.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
@@ -1844,12 +2049,13 @@ function animate() {
     updatePowerups(dt);
 
     const previousY = ball.position.y;
-    ballVelocity += gravity * dt;
+    ballVelocity = Math.max(ballVelocity + gravity * dt, -terminalVelocity);
     ball.position.y += ballVelocity * dt;
     ball.rotation.x += dt * 8;
 
     scene.updateMatrixWorld(true);
     checkBallCrateHit(previousY);
+    handlePlatformUndersideCollision(previousY);
     handlePlatformCollision(previousY);
     updateBullets(dt);
     updateEnemies(dt);
