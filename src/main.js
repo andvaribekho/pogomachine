@@ -37,6 +37,7 @@ const terminalVelocityInput = document.querySelector('#terminal-velocity-input')
 const stompImpulseInput = document.querySelector('#stomp-impulse-input');
 const cannonChargeInput = document.querySelector('#cannon-charge-input');
 const cannonCooldownInput = document.querySelector('#cannon-cooldown-input');
+const coinAttractionInput = document.querySelector('#coin-attraction-input');
 const levelCompleteEl = document.querySelector('#level-complete');
 const completeSummaryEl = document.querySelector('#complete-summary');
 const rewardHpButton = document.querySelector('#reward-hp');
@@ -104,12 +105,14 @@ const defaultTerminalVelocity = 28;
 const defaultStompImpulse = 5.4;
 const defaultCannonChargeTime = 3;
 const defaultCannonCooldown = 5;
+const defaultCoinAttractionRadius = 1.05;
 const maxHp = 3;
 const invulnerabilityCost = 20;
 const shieldCost = 20;
 const bulletSpeed = 22;
 const bulletLifetime = 1.05;
 const baseShotUpwardVelocityCap = 2.4;
+const bounceCubePoolSize = 100;
 
 const ballStartY = 1.9;
 let ballVelocity = 0;
@@ -131,6 +134,8 @@ let impulseBShotgunImpulse = 4;
 let controlMode = 'A';
 let timeScale = 1;
 let damageSlowdownTimer = 0;
+let grayscaleAmount = 0;
+let coinAttractionRadius = defaultCoinAttractionRadius;
 const touchPointerIds = new Set();
 let shopTilePlat = null;
 let shopTileRef = null;
@@ -166,6 +171,8 @@ const floatingTexts = [];
 const crates = [];
 const coinPickups = [];
 const cannons = [];
+const bounceCubes = [];
+let nextBounceCubeOrder = 1;
 
 let shakeIntensity = 0;
 let shakeDecay = 0;
@@ -196,6 +203,7 @@ const batWingGeometry = new THREE.BoxGeometry(0.46, 0.045, 0.2);
 const spikeBodyGeometry = new THREE.SphereGeometry(0.28, 20, 14);
 const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
 const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
+const bounceCubeGeometry = new THREE.BoxGeometry(0.14, 0.14, 0.14);
 const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
 const wormHeadGeometry = new THREE.SphereGeometry(0.18, 14, 10);
 const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
@@ -439,6 +447,26 @@ function playRewardSound() {
     gain.connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.24);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playCoinCubeCollectSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(1480, now + 0.08);
+    gain.gain.setValueAtTime(0.16, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.14);
   } catch (_) {
     /* silent */
   }
@@ -1138,6 +1166,14 @@ function setCannonCooldown(value) {
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
 }
 
+function setCoinAttractionRadius(value) {
+  const nextValue = Number.parseFloat(value);
+  coinAttractionRadius = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0.1, 5)
+    : defaultCoinAttractionRadius;
+  coinAttractionInput.value = coinAttractionRadius.toFixed(2);
+}
+
 function setShotgunSpreadAngle(value) {
   const nextValue = Number.parseFloat(value);
   shotgunSpreadAngle = Number.isFinite(nextValue)
@@ -1170,6 +1206,7 @@ function syncOptionsPanel() {
   stompImpulseInput.value = stompImpulse.toFixed(1);
   cannonChargeInput.value = cannonChargeTime.toFixed(1);
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
+  coinAttractionInput.value = coinAttractionRadius.toFixed(2);
   impulseBResetInput.value = impulseBResetSpeed.toFixed(1);
   impulseBShotgunInput.value = impulseBShotgunImpulse.toFixed(1);
 }
@@ -1207,12 +1244,12 @@ function worldToScreen(position) {
   };
 }
 
-function spawnCoinPickupAnimation(worldPosition) {
+function spawnCoinPickupAnimation(worldPosition, value = 5) {
   const start = worldToScreen(worldPosition);
   const targetRect = coinsEl.getBoundingClientRect();
   const coin = document.createElement('div');
   coin.className = 'coin-pickup';
-  coin.textContent = '+5';
+  coin.textContent = `+${value}`;
   coin.style.left = `${start.x}px`;
   coin.style.top = `${start.y}px`;
   document.body.appendChild(coin);
@@ -1432,6 +1469,211 @@ function spawnBulletImpact(position) {
   }
 }
 
+function ensureBounceCubePool() {
+  if (bounceCubes.length > 0) return;
+
+  for (let i = 0; i < bounceCubePoolSize; i += 1) {
+    const material = new THREE.MeshStandardMaterial({ color: 0xffc107, roughness: 0.5 });
+    const mesh = new THREE.Mesh(bounceCubeGeometry, material);
+    mesh.visible = false;
+    scene.add(mesh);
+    bounceCubes.push({
+      mesh,
+      material,
+      velocity: new THREE.Vector3(),
+      active: false,
+      grounded: false,
+      platform: null,
+      value: 1,
+      collected: false,
+      order: 0,
+    });
+  }
+}
+
+function getPooledBounceCube() {
+  ensureBounceCubePool();
+  const inactiveCube = bounceCubes.find(cube => !cube.active);
+  if (inactiveCube) return inactiveCube;
+
+  return bounceCubes.reduce((oldest, cube) => cube.order < oldest.order ? cube : oldest, bounceCubes[0]);
+}
+
+function spawnBounceCubes(position) {
+  ensureBounceCubePool();
+
+  for (let i = 0; i < 3; i += 1) {
+    const cube = getPooledBounceCube();
+    resetBounceCube(cube, position);
+  }
+}
+
+function resetBounceCube(cube, position) {
+  if (cube.mesh.parent && cube.mesh.parent !== scene) cube.mesh.parent.remove(cube.mesh);
+  if (cube.mesh.parent !== scene) scene.add(cube.mesh);
+
+  cube.mesh.visible = true;
+  cube.mesh.position.copy(position);
+  cube.mesh.position.y += 0.1;
+  cube.mesh.rotation.set(0, 0, 0);
+  cube.material.color.setHex(0xffc107);
+
+  const angle = Math.random() * twoPi;
+  const speed = 1.5 + Math.random() * 2;
+  cube.velocity.set(
+    Math.cos(angle) * speed,
+    2.5 + Math.random() * 2,
+    Math.sin(angle) * speed
+  );
+
+  cube.active = true;
+  cube.grounded = false;
+  cube.platform = null;
+  cube.collected = false;
+  cube.value = 1;
+  cube.order = nextBounceCubeOrder;
+  nextBounceCubeOrder += 1;
+}
+
+function updateBounceCubes(dt) {
+  const collectRadius = (ballRadius + 0.14) * (ballRadius + 0.14);
+  const attractRadiusSq = coinAttractionRadius * coinAttractionRadius;
+  const attractStrength = 11;
+  const cubeHalfSize = 0.07;
+
+  for (const cube of bounceCubes) {
+    if (!cube.active || cube.collected) continue;
+
+    const worldPos = getBounceCubeWorldPosition(cube);
+    const dx = ball.position.x - worldPos.x;
+    const dy = ball.position.y - worldPos.y;
+    const dz = ball.position.z - worldPos.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+
+    if (distanceSq <= attractRadiusSq && distanceSq > collectRadius) {
+      const direction = new THREE.Vector3(dx, dy, dz).normalize();
+      detachBounceCubeToScene(cube, worldPos);
+      cube.grounded = false;
+      cube.platform = null;
+      cube.velocity.addScaledVector(direction, attractStrength * dt);
+      cube.velocity.multiplyScalar(Math.max(0, 1 - 1.8 * dt));
+    }
+
+    if (!cube.grounded) {
+      const previousY = cube.mesh.position.y;
+      cube.velocity.y -= 14 * dt;
+      cube.mesh.position.addScaledVector(cube.velocity, dt);
+      cube.mesh.rotation.x += dt * 5;
+      cube.mesh.rotation.z += dt * 3;
+
+      for (const platform of platforms) {
+        const platformTop = platformY(platform) + platformThickness / 2;
+        const bottomBefore = previousY - cubeHalfSize;
+        const bottomNow = cube.mesh.position.y - cubeHalfSize;
+        if (bottomBefore >= platformTop && bottomNow <= platformTop && cube.velocity.y < 0) {
+          const landingWorldPos = cube.mesh.position.clone();
+          landingWorldPos.y = platformTop + cubeHalfSize;
+          const tile = getTileAtWorldPoint(platform, landingWorldPos);
+          if (!tile) continue;
+
+          const nextWorldPos = landingWorldPos.clone().add(new THREE.Vector3(cube.velocity.x, 0, cube.velocity.z));
+          const localNext = nextWorldPos.clone();
+          scene.remove(cube.mesh);
+          world.add(cube.mesh);
+          cube.mesh.position.copy(landingWorldPos);
+          world.worldToLocal(cube.mesh.position);
+          world.worldToLocal(localNext);
+          cube.grounded = true;
+          cube.platform = platform;
+          cube.velocity.set(
+            (localNext.x - cube.mesh.position.x) * 0.7,
+            0,
+            (localNext.z - cube.mesh.position.z) * 0.7
+          );
+          cube.mesh.rotation.set(0, 0, 0);
+          break;
+        }
+      }
+    } else {
+      cube.mesh.position.x += cube.velocity.x * dt;
+      cube.mesh.position.z += cube.velocity.z * dt;
+      if (cube.platform) {
+        cube.mesh.position.y = cube.platform.group.position.y + platformThickness / 2 + cubeHalfSize;
+      }
+      cube.velocity.x *= Math.max(0, 1 - 4 * dt);
+      cube.velocity.z *= Math.max(0, 1 - 4 * dt);
+    }
+
+    const nextWorldPos = getBounceCubeWorldPosition(cube);
+    const nextDx = ball.position.x - nextWorldPos.x;
+    const nextDy = ball.position.y - nextWorldPos.y;
+    const nextDz = ball.position.z - nextWorldPos.z;
+    if (nextDx * nextDx + nextDy * nextDy + nextDz * nextDz <= collectRadius) {
+      collectBounceCube(cube, nextWorldPos);
+    }
+  }
+}
+
+function collectBounceCube(cube, worldPos) {
+  if (!cube.active || cube.collected) return;
+
+  cube.collected = true;
+  coins += cube.value;
+  updateCoinsUI();
+  spawnCoinPickupAnimation(worldPos, cube.value);
+  playCoinCubeCollectSound();
+  deactivateBounceCube(cube);
+}
+
+function getBounceCubeWorldPosition(cube) {
+  if (!cube.mesh.parent || cube.mesh.parent === scene) return cube.mesh.position;
+  const worldPos = cube.mesh.position.clone();
+  cube.mesh.parent.localToWorld(worldPos);
+  return worldPos;
+}
+
+function detachBounceCubeToScene(cube, worldPos = getBounceCubeWorldPosition(cube)) {
+  if (cube.mesh.parent === scene) return;
+  if (cube.mesh.parent) {
+    const worldNext = cube.mesh.position.clone().add(cube.velocity);
+    cube.mesh.parent.localToWorld(worldNext);
+    cube.velocity.copy(worldNext.sub(worldPos));
+    cube.mesh.parent.remove(cube.mesh);
+  }
+  scene.add(cube.mesh);
+  cube.mesh.position.copy(worldPos);
+}
+
+function deactivateBounceCube(cube) {
+  if (cube.mesh.parent && cube.mesh.parent !== scene) cube.mesh.parent.remove(cube.mesh);
+  if (cube.mesh.parent !== scene) scene.add(cube.mesh);
+  cube.mesh.visible = false;
+  cube.velocity.set(0, 0, 0);
+  cube.active = false;
+  cube.grounded = false;
+  cube.platform = null;
+  cube.collected = false;
+  cube.order = 0;
+}
+
+function deactivateAllBounceCubes() {
+  ensureBounceCubePool();
+  for (const cube of bounceCubes) {
+    deactivateBounceCube(cube);
+  }
+}
+
+function detachBounceCubesFromPlatform(platform) {
+  for (const cube of bounceCubes) {
+    if (!cube.active || cube.platform !== platform) continue;
+
+    detachBounceCubeToScene(cube);
+    cube.platform = null;
+    cube.grounded = false;
+    cube.velocity.set(0, -0.2, 0);
+  }
+}
+
 function breakCrate(crateIndex, byBullet = false) {
   const crate = crates[crateIndex];
   if (!crate || crate.broken) return false;
@@ -1524,10 +1766,16 @@ function breakCrackedTile(platform, tile) {
 
 function removeEnemyAt(index, explosionColor) {
   const enemy = enemies[index];
-  const position = enemy.group.position.clone();
+  const position = new THREE.Vector3();
+  if (enemy.type === 'pillarWorm' && enemy.collisionPosition) {
+    position.copy(enemy.collisionPosition);
+  } else {
+    enemy.group.getWorldPosition(position);
+  }
   disposeEnemy(enemy);
   enemies.splice(index, 1);
   spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
+  spawnBounceCubes(position);
 }
 
 function killEnemyAt(index, explosionColor) {
@@ -1998,6 +2246,7 @@ function clearTower() {
   clearBullets();
   clearEnemiesAndParticles();
   clearCoinPickups();
+  deactivateAllBounceCubes();
   crates.length = 0;
   cannons.length = 0;
 
@@ -2064,6 +2313,8 @@ function resetGame() {
   shieldMesh.visible = false;
   damageSlowdownTimer = 0;
   timeScale = 1;
+  grayscaleAmount = 0;
+  scene.background.setHex(0xeef7ff);
   updatePersistentUI();
   startLevel();
 }
@@ -2502,6 +2753,7 @@ function recyclePlatforms() {
     }
 
     if (y > ball.position.y + 12) {
+      detachBounceCubesFromPlatform(platform);
       world.remove(platform.group);
       platform.group.traverse((child) => {
         if (child.geometry) child.geometry.dispose();
@@ -2846,6 +3098,10 @@ cannonCooldownInput.addEventListener('input', () => {
   setCannonCooldown(cannonCooldownInput.value);
 });
 
+coinAttractionInput.addEventListener('input', () => {
+  setCoinAttractionRadius(coinAttractionInput.value);
+});
+
 window.addEventListener('pointerdown', onPointerDown);
 window.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
@@ -2868,6 +3124,20 @@ function animate() {
     damageSlowdownTimer = Math.max(0, damageSlowdownTimer - realDt);
     if (damageSlowdownTimer === 0) timeScale = 1;
   }
+
+  const grayscaleTarget = damageSlowdownTimer > 0 ? 1 : 0;
+  grayscaleAmount += (grayscaleTarget - grayscaleAmount) * Math.min(1, realDt / 0.2);
+  const _bgR = 0xee / 255;
+  const _bgG = 0xf7 / 255;
+  const _bgB = 0xff / 255;
+  const _darkR = 0x2f / 255;
+  const _darkG = 0x33 / 255;
+  const _darkB = 0x38 / 255;
+  scene.background.setRGB(
+    _bgR + (_darkR - _bgR) * grayscaleAmount,
+    _bgG + (_darkG - _bgG) * grayscaleAmount,
+    _bgB + (_darkB - _bgB) * grayscaleAmount
+  );
 
   const dt = realDt * timeScale;
   scaledTime += dt;
@@ -2894,8 +3164,9 @@ function animate() {
     updateEnemies(dt);
     updateCannons(dt);
     updateCoinPickups(dt);
-    recyclePlatforms();
     updateParticles(dt);
+    updateBounceCubes(dt);
+    recyclePlatforms();
     updateFloatingTexts(dt);
     updateTileFlashes(dt);
     updateCamera(dt);
