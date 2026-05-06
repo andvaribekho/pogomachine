@@ -72,11 +72,17 @@ const colors = {
   blue: 0x2196f3,
   blueFlash: 0x90caf9,
   crack: 0x0d47a1,
+  gray: 0x8a949e,
+  grayFlash: 0xcfd8dc,
+  grayCrack: 0x37474f,
+  grayParticle: 0x9ea7ad,
   finish: 0x2ecc71,
   red: 0xf44336,
   pillar: 0x243447,
   ball: 0xffd54f,
   bullet: 0xfff176,
+  gold: 0xffc107,
+  goldFlash: 0xffffff,
   bat: 0x263238,
   batWing: 0x455a64,
   spike: 0x6d4c41,
@@ -106,6 +112,8 @@ const defaultStompImpulse = 5.4;
 const defaultCannonChargeTime = 3;
 const defaultCannonCooldown = 5;
 const defaultCoinAttractionRadius = 1.05;
+const goldBlocksPerLevel = 3;
+const ledgesPerLevel = 14;
 const maxHp = 3;
 const invulnerabilityCost = 20;
 const shieldCost = 20;
@@ -113,6 +121,11 @@ const bulletSpeed = 22;
 const bulletLifetime = 1.05;
 const baseShotUpwardVelocityCap = 2.4;
 const bounceCubePoolSize = 100;
+const gameplayLaneRadius = platformOuterRadius - 0.8;
+const goldBlockHitsToBreak = 5;
+const goldCubesPerHit = 2;
+const grayTileHitsToBreak = 3;
+const ledgeRadialLength = gameplayLaneRadius - pillarRadius;
 
 const ballStartY = 1.9;
 let ballVelocity = 0;
@@ -169,9 +182,11 @@ const enemies = [];
 const particles = [];
 const floatingTexts = [];
 const crates = [];
+const goldBlocks = [];
 const coinPickups = [];
 const cannons = [];
 const bounceCubes = [];
+const ledges = [];
 let nextBounceCubeOrder = 1;
 
 let shakeIntensity = 0;
@@ -205,6 +220,8 @@ const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
 const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
 const bounceCubeGeometry = new THREE.BoxGeometry(0.14, 0.14, 0.14);
 const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
+const goldBlockGeometry = new THREE.BoxGeometry(0.46, 0.46, 0.46);
+const ledgeGeometry = new THREE.BoxGeometry(ledgeRadialLength, 0.18, 0.36);
 const wormHeadGeometry = new THREE.SphereGeometry(0.18, 14, 10);
 const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
@@ -218,6 +235,8 @@ const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roug
 const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
 const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
 const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
+const goldBlockMaterial = new THREE.MeshStandardMaterial({ color: colors.gold, emissive: 0x8a5a00, emissiveIntensity: 0.25, roughness: 0.28, metalness: 0.65 });
+const ledgeMaterial = new THREE.MeshStandardMaterial({ color: 0x546e7a, roughness: 0.58, metalness: 0.05 });
 const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
 const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
 const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
@@ -609,6 +628,10 @@ function isBlueTile(tile) {
   return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop';
 }
 
+function isFlashablePlatformTile(tile) {
+  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop' || tile.type === 'gray';
+}
+
 function makeCrackLine(startAngle, endAngle) {
   const centerAngle = (startAngle + endAngle) / 2;
   const points = [
@@ -623,6 +646,37 @@ function makeCrackLine(startAngle, endAngle) {
   );
 }
 
+function makeGrayCrackLines(startAngle, endAngle, stage) {
+  const group = new THREE.Group();
+  const centerAngle = (startAngle + endAngle) / 2;
+  const lineCount = stage >= 2 ? 3 : 1;
+
+  for (let i = 0; i < lineCount; i += 1) {
+    const offset = (i - (lineCount - 1) / 2) * 0.09;
+    const spread = stage >= 2 ? 0.14 : 0.08;
+    const points = [
+      new THREE.Vector3(Math.cos(centerAngle - spread + offset) * 1.24, platformThickness / 2 + 0.018, Math.sin(centerAngle - spread + offset) * 1.24),
+      new THREE.Vector3(Math.cos(centerAngle + 0.03 - offset) * 1.7, platformThickness / 2 + 0.018, Math.sin(centerAngle + 0.03 - offset) * 1.7),
+      new THREE.Vector3(Math.cos(centerAngle - 0.06 + offset) * 2.2, platformThickness / 2 + 0.018, Math.sin(centerAngle - 0.06 + offset) * 2.2),
+      new THREE.Vector3(Math.cos(centerAngle + spread - offset) * 2.82, platformThickness / 2 + 0.018, Math.sin(centerAngle + spread - offset) * 2.82),
+    ];
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: colors.grayCrack })
+    ));
+  }
+
+  return group;
+}
+
+function getPlatformTileColor(type) {
+  if (type === 'red') return colors.red;
+  if (type === 'finish') return colors.finish;
+  if (type === 'gray') return colors.gray;
+  if (type === 'shop') return colors.shop;
+  return colors.blue;
+}
+
 function createPlatform(y, id, options = {}) {
   const group = new THREE.Group();
   group.position.y = y;
@@ -632,6 +686,7 @@ function createPlatform(y, id, options = {}) {
   const segmentCount = isFinal ? 16 : Math.floor(8 + difficulty * 5);
   const gapCount = isFinal ? 0 : Math.min(4, 2 + Math.floor(difficulty * 3));
   const redChance = isFinal ? 0 : 0.08 + difficulty * 0.17;
+  const grayChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
   const crackedChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
   const arcSize = twoPi / segmentCount;
   const tiles = [];
@@ -647,18 +702,21 @@ function createPlatform(y, id, options = {}) {
     const start = i * arcSize;
     const end = (i + 1) * arcSize;
     let type = isFinal ? 'finish' : Math.random() < redChance && id > 1 ? 'red' : 'blue';
+    if (type === 'blue' && Math.random() < grayChance && id > 2) {
+      type = 'gray';
+    }
     if (type === 'blue' && Math.random() < crackedChance && id > 2) {
       type = 'crackedBlue';
     }
     const geometry = makeArcGeometry(platformInnerRadius, platformOuterRadius, start, end, platformThickness);
-    const tileColor = type === 'red' ? colors.red : type === 'finish' ? colors.finish : colors.blue;
+    const tileColor = getPlatformTileColor(type);
     const material = new THREE.MeshStandardMaterial({ color: tileColor, roughness: 0.6, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
     const crackLine = type === 'crackedBlue' ? makeCrackLine(start, end) : null;
     mesh.receiveShadow = true;
     group.add(mesh);
     if (crackLine) group.add(crackLine);
-    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false };
+    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false, hitCount: 0 };
     tiles.push(tile);
   }
 
@@ -666,7 +724,7 @@ function createPlatform(y, id, options = {}) {
     for (let c = 0; c < 3; c += 1) {
       if (Math.random() < 0.055) {
         const crateAngle = Math.random() * twoPi;
-        const crateRadius = platformOuterRadius - 0.8;
+        const crateRadius = gameplayLaneRadius;
         const crateTile = tiles.find(t =>
           t.type === 'blue' && !t.broken &&
           angleInArc(crateAngle, t.start, t.end)
@@ -730,6 +788,68 @@ function createCrate(platformGroup, angle, radius) {
   mesh.rotation.y = angle;
   platformGroup.add(mesh);
   crates.push({ mesh, platformGroup, value: 5, broken: false });
+}
+
+function createGoldBlock(platformData, tile) {
+  const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
+  const mesh = new THREE.Mesh(goldBlockGeometry.clone(), goldBlockMaterial.clone());
+  mesh.position.set(
+    Math.cos(angle) * gameplayLaneRadius,
+    platformThickness / 2 + 0.35,
+    Math.sin(angle) * gameplayLaneRadius
+  );
+  mesh.rotation.y = angle + Math.PI * 0.25;
+  mesh.castShadow = true;
+  platformData.group.add(mesh);
+  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, broken: false });
+}
+
+function spawnGoldBlocksForLevel() {
+  const floorCandidates = platforms
+    .filter(platform => !platform.final)
+    .map(platform => ({
+      platform,
+      tiles: platform.tiles.filter(tile => !tile.broken && (tile.type === 'blue' || tile.type === 'gray')),
+    }))
+    .filter(candidate => candidate.tiles.length > 0)
+    .sort(() => Math.random() - 0.5);
+
+  for (let i = 0; i < Math.min(goldBlocksPerLevel, floorCandidates.length); i += 1) {
+    const candidate = floorCandidates[i];
+    const tile = candidate.tiles[Math.floor(Math.random() * candidate.tiles.length)];
+    createGoldBlock(candidate.platform, tile);
+  }
+}
+
+function createPillarLedge(y, angle) {
+  const group = new THREE.Group();
+  const centerRadius = pillarRadius + ledgeRadialLength / 2;
+  group.position.set(Math.cos(angle) * centerRadius, y, Math.sin(angle) * centerRadius);
+  group.rotation.y = -angle;
+
+  const mesh = new THREE.Mesh(ledgeGeometry.clone(), ledgeMaterial.clone());
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  world.add(group);
+
+  ledges.push({ group, mesh, broken: false });
+}
+
+function spawnPillarLedgesForLevel() {
+  const target = getLevelTarget();
+  const intervalCount = Math.max(1, target - 1);
+  const usedIntervals = new Set();
+
+  while (usedIntervals.size < Math.min(ledgesPerLevel, intervalCount)) {
+    usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
+  }
+
+  for (const interval of usedIntervals) {
+    const y = -(interval + 0.35 + Math.random() * 0.3) * platformSpacing;
+    const angle = Math.random() * twoPi;
+    createPillarLedge(y, angle);
+  }
 }
 
 function createBatMesh() {
@@ -1411,6 +1531,12 @@ function updateBullets(dt) {
       continue;
     }
 
+    if (checkBulletGoldBlockHit(bullet, previousY)) {
+      scene.remove(bullet.mesh);
+      bullets.splice(i, 1);
+      continue;
+    }
+
     if (checkBulletCannonHit(bullet)) {
       scene.remove(bullet.mesh);
       bullets.splice(i, 1);
@@ -1499,16 +1625,16 @@ function getPooledBounceCube() {
   return bounceCubes.reduce((oldest, cube) => cube.order < oldest.order ? cube : oldest, bounceCubes[0]);
 }
 
-function spawnBounceCubes(position) {
+function spawnBounceCubes(position, count = 3, color = 0xffc107, value = 1) {
   ensureBounceCubePool();
 
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < count; i += 1) {
     const cube = getPooledBounceCube();
-    resetBounceCube(cube, position);
+    resetBounceCube(cube, position, color, value);
   }
 }
 
-function resetBounceCube(cube, position) {
+function resetBounceCube(cube, position, color = 0xffc107, value = 1) {
   if (cube.mesh.parent && cube.mesh.parent !== scene) cube.mesh.parent.remove(cube.mesh);
   if (cube.mesh.parent !== scene) scene.add(cube.mesh);
 
@@ -1516,7 +1642,7 @@ function resetBounceCube(cube, position) {
   cube.mesh.position.copy(position);
   cube.mesh.position.y += 0.1;
   cube.mesh.rotation.set(0, 0, 0);
-  cube.material.color.setHex(0xffc107);
+  cube.material.color.setHex(color);
 
   const angle = Math.random() * twoPi;
   const speed = 1.5 + Math.random() * 2;
@@ -1530,7 +1656,7 @@ function resetBounceCube(cube, position) {
   cube.grounded = false;
   cube.platform = null;
   cube.collected = false;
-  cube.value = 1;
+  cube.value = value;
   cube.order = nextBounceCubeOrder;
   nextBounceCubeOrder += 1;
 }
@@ -1741,9 +1867,57 @@ function disposeTile(tile) {
 
   if (tile.crackLine) {
     if (tile.crackLine.parent) tile.crackLine.parent.remove(tile.crackLine);
-    tile.crackLine.geometry.dispose();
-    tile.crackLine.material.dispose();
+    tile.crackLine.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    if (tile.crackLine.geometry) tile.crackLine.geometry.dispose();
+    if (tile.crackLine.material) tile.crackLine.material.dispose();
   }
+}
+
+function setGrayTileCrackStage(platform, tile, stage) {
+  if (tile.crackLine) {
+    if (tile.crackLine.parent) tile.crackLine.parent.remove(tile.crackLine);
+    tile.crackLine.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+  }
+
+  tile.crackLine = makeGrayCrackLines(tile.start, tile.end, stage);
+  platform.group.add(tile.crackLine);
+}
+
+function breakGrayTile(platform, tile) {
+  if (tile.broken) return;
+
+  const centerAngle = (tile.start + tile.end) / 2;
+  const centerRadius = (platformInnerRadius + platformOuterRadius) / 2;
+  const breakPosition = new THREE.Vector3(
+    Math.cos(centerAngle) * centerRadius,
+    platformThickness / 2 + 0.05,
+    Math.sin(centerAngle) * centerRadius
+  );
+  platform.group.localToWorld(breakPosition);
+
+  tile.broken = true;
+  disposeTile(tile);
+  playGlassBreakSound();
+  spawnExplosion(breakPosition, colors.grayParticle, 18);
+}
+
+function damageGrayTile(platform, tile) {
+  if (tile.broken || tile.type !== 'gray') return false;
+
+  tile.hitCount += 1;
+  tile.flashTimer = 0.18;
+  if (tile.hitCount >= grayTileHitsToBreak) {
+    breakGrayTile(platform, tile);
+  } else {
+    setGrayTileCrackStage(platform, tile, tile.hitCount);
+  }
+  return true;
 }
 
 function breakCrackedTile(platform, tile) {
@@ -1923,6 +2097,73 @@ function checkBulletEnemyHit(bullet) {
   return false;
 }
 
+function destroyGoldBlock(index, position) {
+  const goldBlock = goldBlocks[index];
+  if (!goldBlock || goldBlock.broken) return;
+
+  goldBlock.broken = true;
+  spawnExplosion(position, colors.gold, 14);
+  if (goldBlock.mesh.parent) goldBlock.mesh.parent.remove(goldBlock.mesh);
+  goldBlock.mesh.geometry.dispose();
+  goldBlock.mesh.material.dispose();
+  goldBlocks.splice(index, 1);
+}
+
+function damageGoldBlock(index) {
+  const goldBlock = goldBlocks[index];
+  if (!goldBlock || goldBlock.broken) return false;
+
+  const position = new THREE.Vector3();
+  goldBlock.mesh.getWorldPosition(position);
+  goldBlock.hp -= 1;
+  goldBlock.flashTimer = 0.16;
+  spawnBounceCubes(position, goldCubesPerHit, colors.gold, 1);
+  spawnBulletImpact(position);
+
+  if (goldBlock.hp <= 0) {
+    destroyGoldBlock(index, position);
+  }
+  return true;
+}
+
+function checkBulletGoldBlockHit(bullet, previousY) {
+  for (let i = goldBlocks.length - 1; i >= 0; i -= 1) {
+    const goldBlock = goldBlocks[i];
+    if (goldBlock.broken) continue;
+
+    const position = new THREE.Vector3();
+    goldBlock.mesh.getWorldPosition(position);
+    const crossedBlockY = previousY >= position.y && bullet.mesh.position.y <= position.y;
+    const horizontalDistance = Math.hypot(
+      bullet.mesh.position.x - position.x,
+      bullet.mesh.position.z - position.z
+    );
+
+    if (crossedBlockY && horizontalDistance <= 0.34) {
+      return damageGoldBlock(i);
+    }
+  }
+  return false;
+}
+
+function updateGoldBlocks(dt) {
+  for (const goldBlock of goldBlocks) {
+    if (goldBlock.broken) continue;
+
+    goldBlock.mesh.rotation.y += dt * 0.7;
+    if (goldBlock.flashTimer > 0) {
+      goldBlock.flashTimer = Math.max(0, goldBlock.flashTimer - dt);
+      goldBlock.mesh.material.color.setHex(colors.goldFlash);
+      goldBlock.mesh.material.emissive.setHex(colors.goldFlash);
+      goldBlock.mesh.material.emissiveIntensity = 0.55;
+    } else {
+      goldBlock.mesh.material.color.setHex(colors.gold);
+      goldBlock.mesh.material.emissive.setHex(0x8a5a00);
+      goldBlock.mesh.material.emissiveIntensity = 0.25;
+    }
+  }
+}
+
 function getCannonWorldPosition(cannon) {
   _cannonWorldPosition.set(0, 0.25, 0);
   cannon.group.localToWorld(_cannonWorldPosition);
@@ -1976,7 +2217,7 @@ function getBallCannonContact(cannon) {
 }
 
 function isSolidLineOfSightTile(tile) {
-  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue');
+  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue' || tile.type === 'gray');
 }
 
 function getAngularDistance(a, b) {
@@ -2081,6 +2322,56 @@ function updateCannons(dt) {
       cannon.ring.visible = false;
       cannon.laser.visible = true;
       playCannonFireSound();
+    }
+  }
+}
+
+function destroyLedge(index) {
+  const ledge = ledges[index];
+  if (!ledge || ledge.broken) return;
+
+  const position = new THREE.Vector3();
+  ledge.group.getWorldPosition(position);
+  ledge.broken = true;
+  spawnExplosion(position, 0x78909c, 16);
+  if (ledge.group.parent) ledge.group.parent.remove(ledge.group);
+  ledge.group.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) child.material.dispose();
+  });
+  ledges.splice(index, 1);
+}
+
+function updateLedges(previousY) {
+  if (ballVelocity >= 0) return;
+
+  const colliderOffset = ballRadius * 0.58;
+  const bottomBefore = previousY - colliderOffset;
+  const bottomNow = ball.position.y - colliderOffset;
+  const halfLength = ledgeRadialLength / 2;
+  const halfWidth = 0.18;
+
+  for (let i = ledges.length - 1; i >= 0; i -= 1) {
+    const ledge = ledges[i];
+    if (ledge.broken) continue;
+
+    const ledgeTop = ledge.group.position.y + 0.09;
+    if (bottomBefore < ledgeTop || bottomNow > ledgeTop) {
+      if (ledge.group.position.y > ball.position.y + 15) destroyLedge(i);
+      continue;
+    }
+
+    _ballBottomCollider.copy(ball.position).y -= colliderOffset;
+    ledge.group.worldToLocal(_ballBottomCollider);
+    if (Math.abs(_ballBottomCollider.x) <= halfLength && Math.abs(_ballBottomCollider.z) <= halfWidth) {
+      destroyLedge(i);
+      if (reloadAmmo()) {
+        spawnFloatingText('Reload', ball.position);
+        playReloadSound();
+      }
+      playBounceSound();
+      ballVelocity = Math.max(ballVelocity, stompImpulse);
+      return;
     }
   }
 }
@@ -2248,7 +2539,9 @@ function clearTower() {
   clearCoinPickups();
   deactivateAllBounceCubes();
   crates.length = 0;
+  goldBlocks.length = 0;
   cannons.length = 0;
+  ledges.length = 0;
 
   while (platforms.length) {
     const platform = platforms.pop();
@@ -2299,6 +2592,8 @@ function startLevel() {
     createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
     nextPlatformId += 1;
   }
+  spawnGoldBlocksForLevel();
+  spawnPillarLedgesForLevel();
 }
 
 function resetGame() {
@@ -2614,6 +2909,9 @@ function checkBulletPlatformHit(bullet, previousY) {
     if (!tile) continue;
 
     spawnBulletImpact(_bulletImpactPoint);
+    if (tile.type === 'gray') {
+      damageGrayTile(collision.platform, tile);
+    }
     return true;
   }
 
@@ -2634,7 +2932,7 @@ function getBallContactOnPlatform(platform) {
 }
 
 function isSolidUndersideTile(tile) {
-  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'red');
+  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'red' || tile.type === 'gray');
 }
 
 function handlePlatformUndersideCollision(previousY) {
@@ -2737,6 +3035,10 @@ function handlePlatformCollision(previousY) {
 }
 
 function recyclePlatforms() {
+  for (let i = ledges.length - 1; i >= 0; i -= 1) {
+    if (ledges[i].group.position.y > ball.position.y + 15) destroyLedge(i);
+  }
+
   for (let i = platforms.length - 1; i >= 0; i -= 1) {
     const platform = platforms[i];
     const y = platformY(platform);
@@ -2754,6 +3056,9 @@ function recyclePlatforms() {
 
     if (y > ball.position.y + 12) {
       detachBounceCubesFromPlatform(platform);
+      for (let g = goldBlocks.length - 1; g >= 0; g -= 1) {
+        if (goldBlocks[g].platformData === platform) goldBlocks.splice(g, 1);
+      }
       world.remove(platform.group);
       platform.group.traverse((child) => {
         if (child.geometry) child.geometry.dispose();
@@ -2790,14 +3095,15 @@ const _flashB = new THREE.Color();
 function updateTileFlashes(dt) {
   for (const platform of platforms) {
     for (const tile of platform.tiles) {
-      if (!isBlueTile(tile) || tile.broken) continue;
+      if (!isFlashablePlatformTile(tile) || tile.broken) continue;
 
-      const baseColor = tile.type === 'shop' ? colors.shop : colors.blue;
+      const baseColor = getPlatformTileColor(tile.type);
+      const flashColor = tile.type === 'gray' ? colors.grayFlash : colors.blueFlash;
       if (tile.flashTimer > 0) {
         tile.flashTimer = Math.max(0, tile.flashTimer - dt);
         const t = tile.flashTimer / 0.3;
         _flashA.setHex(baseColor);
-        _flashB.setHex(colors.blueFlash);
+        _flashB.setHex(flashColor);
         tile.mesh.material.color.copy(_flashA.lerp(_flashB, t));
       } else {
         tile.mesh.material.color.setHex(baseColor);
@@ -3158,11 +3464,13 @@ function animate() {
 
     scene.updateMatrixWorld(true);
     checkBallCrateHit(previousY);
+    updateLedges(previousY);
     handlePlatformUndersideCollision(previousY);
     handlePlatformCollision(previousY);
     updateBullets(dt);
     updateEnemies(dt);
     updateCannons(dt);
+    updateGoldBlocks(dt);
     updateCoinPickups(dt);
     updateParticles(dt);
     updateBounceCubes(dt);
