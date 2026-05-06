@@ -122,6 +122,9 @@ const bulletLifetime = 1.05;
 const baseShotUpwardVelocityCap = 2.4;
 const bounceCubePoolSize = 100;
 const gameplayLaneRadius = platformOuterRadius - 0.8;
+const goldBlockSize = 0.644;
+const goldBlockHalfSize = goldBlockSize / 2;
+const goldBlockCollisionRadius = goldBlockHalfSize + ballRadius + 0.08;
 const goldBlockHitsToBreak = 5;
 const goldCubesPerHit = 2;
 const grayTileHitsToBreak = 3;
@@ -220,7 +223,7 @@ const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
 const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
 const bounceCubeGeometry = new THREE.BoxGeometry(0.14, 0.14, 0.14);
 const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
-const goldBlockGeometry = new THREE.BoxGeometry(0.46, 0.46, 0.46);
+const goldBlockGeometry = new THREE.BoxGeometry(goldBlockSize, goldBlockSize, goldBlockSize);
 const ledgeGeometry = new THREE.BoxGeometry(ledgeRadialLength, 0.18, 0.36);
 const wormHeadGeometry = new THREE.SphereGeometry(0.18, 14, 10);
 const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
@@ -792,16 +795,52 @@ function createCrate(platformGroup, angle, radius) {
 
 function createGoldBlock(platformData, tile) {
   const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const mesh = new THREE.Mesh(goldBlockGeometry.clone(), goldBlockMaterial.clone());
-  mesh.position.set(
+  const position = new THREE.Vector3(
     Math.cos(angle) * gameplayLaneRadius,
-    platformThickness / 2 + 0.35,
+    platformThickness / 2 + goldBlockHalfSize,
     Math.sin(angle) * gameplayLaneRadius
   );
+  if (!isGoldBlockPositionClear(platformData, position)) return false;
+
+  const mesh = new THREE.Mesh(goldBlockGeometry.clone(), goldBlockMaterial.clone());
+  mesh.position.copy(position);
   mesh.rotation.y = angle + Math.PI * 0.25;
   mesh.castShadow = true;
   platformData.group.add(mesh);
-  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, broken: false });
+  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, sparkleTimer: Math.random() * 0.12, broken: false });
+  return true;
+}
+
+function isGoldBlockPositionClear(platformData, localPosition) {
+  const worldPosition = localPosition.clone();
+  platformData.group.localToWorld(worldPosition);
+  const minDistance = goldBlockHalfSize + 0.45;
+
+  for (const crate of crates) {
+    if (crate.broken || crate.platformGroup !== platformData.group) continue;
+    crate.mesh.getWorldPosition(_crateWorldPosition);
+    if (_crateWorldPosition.distanceTo(worldPosition) < minDistance) return false;
+  }
+
+  for (const cannon of cannons) {
+    if (cannon.platformData !== platformData) continue;
+    if (getCannonWorldPosition(cannon).distanceTo(worldPosition) < minDistance) return false;
+  }
+
+  for (const enemy of enemies) {
+    const enemyPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+    if (Math.abs(enemyPosition.y - worldPosition.y) > goldBlockSize + 0.6) continue;
+    if (enemyPosition.distanceToSquared(worldPosition) < minDistance * minDistance) return false;
+  }
+
+  for (const goldBlock of goldBlocks) {
+    if (goldBlock.platformData !== platformData || goldBlock.broken) continue;
+    const position = new THREE.Vector3();
+    goldBlock.mesh.getWorldPosition(position);
+    if (position.distanceTo(worldPosition) < minDistance) return false;
+  }
+
+  return true;
 }
 
 function spawnGoldBlocksForLevel() {
@@ -814,10 +853,16 @@ function spawnGoldBlocksForLevel() {
     .filter(candidate => candidate.tiles.length > 0)
     .sort(() => Math.random() - 0.5);
 
-  for (let i = 0; i < Math.min(goldBlocksPerLevel, floorCandidates.length); i += 1) {
-    const candidate = floorCandidates[i];
-    const tile = candidate.tiles[Math.floor(Math.random() * candidate.tiles.length)];
-    createGoldBlock(candidate.platform, tile);
+  let spawned = 0;
+  for (const candidate of floorCandidates) {
+    if (spawned >= goldBlocksPerLevel) break;
+    const tiles = [...candidate.tiles].sort(() => Math.random() - 0.5);
+    for (const tile of tiles) {
+      if (createGoldBlock(candidate.platform, tile)) {
+        spawned += 1;
+        break;
+      }
+    }
   }
 }
 
@@ -1613,6 +1658,9 @@ function ensureBounceCubePool() {
       value: 1,
       collected: false,
       order: 0,
+      angle: 0,
+      angularVelocity: 0,
+      freeFlight: false,
     });
   }
 }
@@ -1644,13 +1692,15 @@ function resetBounceCube(cube, position, color = 0xffc107, value = 1) {
   cube.mesh.rotation.set(0, 0, 0);
   cube.material.color.setHex(color);
 
-  const angle = Math.random() * twoPi;
-  const speed = 1.5 + Math.random() * 2;
-  cube.velocity.set(
-    Math.cos(angle) * speed,
-    2.5 + Math.random() * 2,
-    Math.sin(angle) * speed
-  );
+  const radial = Math.hypot(position.x, position.z) || 1;
+  cube.mesh.position.x = (position.x / radial) * gameplayLaneRadius;
+  cube.mesh.position.z = (position.z / radial) * gameplayLaneRadius;
+
+  cube.angle = Math.atan2(cube.mesh.position.z, cube.mesh.position.x);
+  const tangentialSpeed = 1.5 + Math.random() * 2;
+  cube.angularVelocity = (Math.random() < 0 ? -1 : 1) * tangentialSpeed / gameplayLaneRadius;
+
+  cube.velocity.set(0, 2.5 + Math.random() * 2, 0);
 
   cube.active = true;
   cube.grounded = false;
@@ -1681,6 +1731,7 @@ function updateBounceCubes(dt) {
       detachBounceCubeToScene(cube, worldPos);
       cube.grounded = false;
       cube.platform = null;
+      cube.freeFlight = true;
       cube.velocity.addScaledVector(direction, attractStrength * dt);
       cube.velocity.multiplyScalar(Math.max(0, 1 - 1.8 * dt));
     }
@@ -1688,7 +1739,16 @@ function updateBounceCubes(dt) {
     if (!cube.grounded) {
       const previousY = cube.mesh.position.y;
       cube.velocity.y -= 14 * dt;
-      cube.mesh.position.addScaledVector(cube.velocity, dt);
+
+      if (cube.freeFlight) {
+        cube.mesh.position.addScaledVector(cube.velocity, dt);
+      } else {
+        cube.angle += cube.angularVelocity * dt;
+        cube.mesh.position.x = Math.cos(cube.angle) * gameplayLaneRadius;
+        cube.mesh.position.z = Math.sin(cube.angle) * gameplayLaneRadius;
+        cube.mesh.position.y += cube.velocity.y * dt;
+      }
+
       cube.mesh.rotation.x += dt * 5;
       cube.mesh.rotation.z += dt * 3;
 
@@ -1699,11 +1759,25 @@ function updateBounceCubes(dt) {
         if (bottomBefore >= platformTop && bottomNow <= platformTop && cube.velocity.y < 0) {
           const landingWorldPos = cube.mesh.position.clone();
           landingWorldPos.y = platformTop + cubeHalfSize;
+
+          if (!cube.freeFlight) {
+            landingWorldPos.x = Math.cos(cube.angle) * gameplayLaneRadius;
+            landingWorldPos.z = Math.sin(cube.angle) * gameplayLaneRadius;
+          }
+
           const tile = getTileAtWorldPoint(platform, landingWorldPos);
           if (!tile) continue;
 
-          const nextWorldPos = landingWorldPos.clone().add(new THREE.Vector3(cube.velocity.x, 0, cube.velocity.z));
-          const localNext = nextWorldPos.clone();
+          const tangentX = -Math.sin(cube.angle || Math.atan2(landingWorldPos.z, landingWorldPos.x));
+          const tangentZ = Math.cos(cube.angle || Math.atan2(landingWorldPos.z, landingWorldPos.x));
+          const tangentialSpeed = cube.freeFlight
+            ? (-landingWorldPos.z * cube.velocity.x + landingWorldPos.x * cube.velocity.z) / (Math.hypot(landingWorldPos.x, landingWorldPos.z) || 1)
+            : (cube.angularVelocity || 0) * gameplayLaneRadius;
+
+          const localNext = landingWorldPos.clone();
+          localNext.x += tangentX * tangentialSpeed * 0.7;
+          localNext.z += tangentZ * tangentialSpeed * 0.7;
+
           scene.remove(cube.mesh);
           world.add(cube.mesh);
           cube.mesh.position.copy(landingWorldPos);
@@ -1711,6 +1785,9 @@ function updateBounceCubes(dt) {
           world.worldToLocal(localNext);
           cube.grounded = true;
           cube.platform = platform;
+          cube.freeFlight = false;
+          cube.angularVelocity = 0;
+          cube.angle = 0;
           cube.velocity.set(
             (localNext.x - cube.mesh.position.x) * 0.7,
             0,
@@ -1725,6 +1802,11 @@ function updateBounceCubes(dt) {
       cube.mesh.position.z += cube.velocity.z * dt;
       if (cube.platform) {
         cube.mesh.position.y = cube.platform.group.position.y + platformThickness / 2 + cubeHalfSize;
+        const localRadial = Math.hypot(cube.mesh.position.x, cube.mesh.position.z);
+        if (localRadial > 0.01) {
+          cube.mesh.position.x = (cube.mesh.position.x / localRadial) * gameplayLaneRadius;
+          cube.mesh.position.z = (cube.mesh.position.z / localRadial) * gameplayLaneRadius;
+        }
       }
       cube.velocity.x *= Math.max(0, 1 - 4 * dt);
       cube.velocity.z *= Math.max(0, 1 - 4 * dt);
@@ -1780,6 +1862,9 @@ function deactivateBounceCube(cube) {
   cube.platform = null;
   cube.collected = false;
   cube.order = 0;
+  cube.angle = 0;
+  cube.angularVelocity = 0;
+  cube.freeFlight = false;
 }
 
 function deactivateAllBounceCubes() {
@@ -1796,6 +1881,7 @@ function detachBounceCubesFromPlatform(platform) {
     detachBounceCubeToScene(cube);
     cube.platform = null;
     cube.grounded = false;
+    cube.freeFlight = true;
     cube.velocity.set(0, -0.2, 0);
   }
 }
@@ -2081,6 +2167,41 @@ function checkBallCrateHit(previousY) {
   }
 }
 
+function checkBallGoldBlockStomp(previousY) {
+  if (ballVelocity >= 0) return;
+
+  const bottomBefore = previousY - ballRadius;
+  const bottomNow = ball.position.y - ballRadius;
+
+  for (let i = goldBlocks.length - 1; i >= 0; i -= 1) {
+    const goldBlock = goldBlocks[i];
+    if (goldBlock.broken) continue;
+
+    const position = new THREE.Vector3();
+    goldBlock.mesh.getWorldPosition(position);
+    const blockTop = position.y + goldBlockHalfSize;
+
+    if (bottomBefore < blockTop || bottomNow > blockTop) continue;
+
+    const horizontalDistance = Math.hypot(
+      ball.position.x - position.x,
+      ball.position.z - position.z
+    );
+
+    if (horizontalDistance <= goldBlockCollisionRadius) {
+      damageGoldBlock(i);
+      if (reloadAmmo()) {
+        spawnFloatingText('Reload', ball.position);
+        playReloadSound();
+      }
+      playBounceSound();
+      ball.position.y = blockTop + ballRadius;
+      ballVelocity = Math.max(ballVelocity, stompImpulse);
+      return;
+    }
+  }
+}
+
 function checkBulletEnemyHit(bullet) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
@@ -2126,6 +2247,28 @@ function damageGoldBlock(index) {
   return true;
 }
 
+function spawnGoldSparkle(goldBlock) {
+  const localOffset = new THREE.Vector3(
+    (Math.random() - 0.5) * goldBlockSize * 0.8,
+    goldBlockHalfSize * 0.6,
+    (Math.random() - 0.5) * goldBlockSize * 0.8
+  );
+  const position = localOffset.clone();
+  goldBlock.mesh.localToWorld(position);
+
+  const material = new THREE.MeshBasicMaterial({ color: colors.gold, transparent: true, opacity: 0.82, depthWrite: false });
+  const mesh = new THREE.Mesh(particleGeometry, material);
+  mesh.position.copy(position);
+  mesh.scale.setScalar(0.45 + Math.random() * 0.35);
+  scene.add(mesh);
+  particles.push({
+    mesh,
+    material,
+    velocity: new THREE.Vector3((Math.random() - 0.5) * 0.18, 0.6 + Math.random() * 0.5, (Math.random() - 0.5) * 0.18),
+    life: 1,
+  });
+}
+
 function checkBulletGoldBlockHit(bullet, previousY) {
   for (let i = goldBlocks.length - 1; i >= 0; i -= 1) {
     const goldBlock = goldBlocks[i];
@@ -2133,13 +2276,13 @@ function checkBulletGoldBlockHit(bullet, previousY) {
 
     const position = new THREE.Vector3();
     goldBlock.mesh.getWorldPosition(position);
-    const crossedBlockY = previousY >= position.y && bullet.mesh.position.y <= position.y;
+    const crossedBlockY = previousY >= position.y - goldBlockHalfSize && bullet.mesh.position.y <= position.y + goldBlockHalfSize;
     const horizontalDistance = Math.hypot(
       bullet.mesh.position.x - position.x,
       bullet.mesh.position.z - position.z
     );
 
-    if (crossedBlockY && horizontalDistance <= 0.34) {
+    if (crossedBlockY && horizontalDistance <= goldBlockHalfSize + 0.16) {
       return damageGoldBlock(i);
     }
   }
@@ -2151,6 +2294,12 @@ function updateGoldBlocks(dt) {
     if (goldBlock.broken) continue;
 
     goldBlock.mesh.rotation.y += dt * 0.7;
+    goldBlock.sparkleTimer -= dt;
+    if (goldBlock.sparkleTimer <= 0) {
+      goldBlock.sparkleTimer = 0.06 + Math.random() * 0.06;
+      spawnGoldSparkle(goldBlock);
+    }
+
     if (goldBlock.flashTimer > 0) {
       goldBlock.flashTimer = Math.max(0, goldBlock.flashTimer - dt);
       goldBlock.mesh.material.color.setHex(colors.goldFlash);
@@ -3464,6 +3613,7 @@ function animate() {
 
     scene.updateMatrixWorld(true);
     checkBallCrateHit(previousY);
+    checkBallGoldBlockStomp(previousY);
     updateLedges(previousY);
     handlePlatformUndersideCollision(previousY);
     handlePlatformCollision(previousY);
