@@ -8,10 +8,11 @@ const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerH
 camera.position.set(0, 6.2, 10.5);
 camera.lookAt(0, -2.2, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scoreEl = document.querySelector('#score');
@@ -64,6 +65,8 @@ const shopHpBtn = document.querySelector('#shop-hp');
 const shopArmorBtn = document.querySelector('#shop-armor');
 const shopInvulnBtn = document.querySelector('#shop-invuln');
 const closeShopButton = document.querySelector('#close-shop-button');
+const arModeButton = document.querySelector('#ar-mode-button');
+const arStatusEl = document.querySelector('#ar-status');
 
 const world = new THREE.Group();
 scene.add(world);
@@ -1457,7 +1460,7 @@ function stopShooting() {
 function clearBullets() {
   while (bullets.length) {
     const bullet = bullets.pop();
-    scene.remove(bullet.mesh);
+    bullet.mesh.removeFromParent();
   }
 }
 
@@ -1565,37 +1568,37 @@ function updateBullets(dt) {
     bullet.mesh.scale.setScalar(Math.max(0.45, bullet.life / bulletLifetime));
 
     if (checkBulletEnemyHit(bullet)) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
     }
 
     if (checkBulletCrateHit(bullet, previousY)) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
     }
 
     if (checkBulletGoldBlockHit(bullet, previousY)) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
     }
 
     if (checkBulletCannonHit(bullet)) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
     }
 
     if (checkBulletPlatformHit(bullet, previousY)) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
     }
 
     if (bullet.life <= 0) {
-      scene.remove(bullet.mesh);
+      bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
     }
   }
@@ -1698,7 +1701,7 @@ function resetBounceCube(cube, position, color = 0xffc107, value = 1) {
 
   cube.angle = Math.atan2(cube.mesh.position.z, cube.mesh.position.x);
   const tangentialSpeed = 1.5 + Math.random() * 2;
-  cube.angularVelocity = (Math.random() < 0 ? -1 : 1) * tangentialSpeed / gameplayLaneRadius;
+  cube.angularVelocity = (Math.random() < 0.5 ? -1 : 1) * tangentialSpeed / gameplayLaneRadius;
 
   cube.velocity.set(0, 2.5 + Math.random() * 2, 0);
 
@@ -1778,7 +1781,7 @@ function updateBounceCubes(dt) {
           localNext.x += tangentX * tangentialSpeed * 0.7;
           localNext.z += tangentZ * tangentialSpeed * 0.7;
 
-          scene.remove(cube.mesh);
+          cube.mesh.removeFromParent();
           world.add(cube.mesh);
           cube.mesh.position.copy(landingWorldPos);
           world.worldToLocal(cube.mesh.position);
@@ -1912,7 +1915,7 @@ function spawnCoinPickup(worldPos) {
   const mesh = new THREE.Mesh(coinPickupGeometry, coinPickupMaterial);
   mesh.position.copy(worldPos);
   mesh.position.y += 0.1;
-  scene.add(mesh);
+    scene.add(mesh);
   coinPickups.push({ mesh, value: 5, collected: false });
 }
 
@@ -1931,7 +1934,7 @@ function updateCoinPickups(dt) {
       coins += pickup.value;
       updateCoinsUI();
       spawnCoinPickupAnimation(pickup.mesh.position);
-      scene.remove(pickup.mesh);
+      pickup.mesh.removeFromParent();
       pickup.mesh.geometry.dispose();
       coinPickups.splice(i, 1);
     }
@@ -1941,7 +1944,7 @@ function updateCoinPickups(dt) {
 function clearCoinPickups() {
   while (coinPickups.length) {
     const pickup = coinPickups.pop();
-    scene.remove(pickup.mesh);
+    pickup.mesh.removeFromParent();
     pickup.mesh.geometry.dispose();
   }
 }
@@ -2608,7 +2611,7 @@ function updateParticles(dt) {
     particle.material.opacity = Math.max(0, particle.life / 0.8);
 
     if (particle.life <= 0) {
-      scene.remove(particle.mesh);
+      particle.mesh.removeFromParent();
       particle.material.dispose();
       particles.splice(i, 1);
     }
@@ -2657,7 +2660,7 @@ function updateFloatingTexts(dt) {
     item.sprite.scale.set(1.35 * scale, 0.68 * scale, 1);
 
     if (item.life <= 0) {
-      scene.remove(item.sprite);
+      item.sprite.removeFromParent();
       item.texture.dispose();
       item.material.dispose();
       floatingTexts.splice(i, 1);
@@ -2671,12 +2674,12 @@ function clearEnemiesAndParticles() {
   }
   while (particles.length) {
     const particle = particles.pop();
-    scene.remove(particle.mesh);
+    particle.mesh.removeFromParent();
     particle.material.dispose();
   }
   while (floatingTexts.length) {
     const item = floatingTexts.pop();
-    scene.remove(item.sprite);
+    item.sprite.removeFromParent();
     item.texture.dispose();
     item.material.dispose();
   }
@@ -2758,7 +2761,7 @@ function resetGame() {
   damageSlowdownTimer = 0;
   timeScale = 1;
   grayscaleAmount = 0;
-  scene.background.setHex(0xeef7ff);
+  if (scene.background) scene.background.setHex(0xeef7ff);
   updatePersistentUI();
   startLevel();
 }
@@ -3261,6 +3264,489 @@ function updateTileFlashes(dt) {
   }
 }
 
+const arScene = new THREE.Scene();
+const arRoot = new THREE.Group();
+const arTowerRotator = new THREE.Group();
+const arBullets = [];
+const arPlatforms = [];
+let arPillar = null;
+let arModeActive = false;
+let arTowerPlaced = false;
+let arReferenceSpace = null;
+let arViewerSpace = null;
+let arHitTestSource = null;
+let arBall = null;
+let arBallVelocity = 0;
+let arLowestPlatformY = 0;
+let arNextPlatformY = 0;
+let arNextPlatformId = 0;
+let arAmmo = 0;
+let arIsShooting = false;
+let arFireCooldown = 0;
+let arLastHapticStep = 0;
+const arScale = 0.16;
+const arMinScale = arScale * 0.1;
+let arCurrentScale = arScale;
+let arScaleAdjusting = false;
+let arScaleStartDistance = 0;
+let arScaleStartValue = arScale;
+const arVisiblePlatformCount = 12;
+const arPlatformSpacing = 2.125;
+const arPlatformBaseY = 0;
+const arGravity = -4.5;
+const arBounceVelocity = 3.1;
+const arBulletSpeed = 5.8;
+const arBulletLifetime = 1.25;
+const arFireInterval = 0.3;
+const arMaxAmmo = 5;
+const arShotImpulse = 1.25;
+const arShotVelocityCap = 2.75;
+const arPillarHeight = 8.5;
+const arPillarTopOffset = 2.1;
+const arControllerPosition = new THREE.Vector3();
+const arControllerLocalPosition = new THREE.Vector3();
+const arGripControllers = new Set();
+
+arScene.add(new THREE.HemisphereLight(0xffffff, 0x78909c, 2.2));
+const arSun = new THREE.DirectionalLight(0xffffff, 1.5);
+arSun.position.set(2, 5, 3);
+arScene.add(arSun);
+arRoot.visible = false;
+arRoot.scale.setScalar(arScale);
+arScene.add(arRoot);
+
+const arReticleGeometry = new THREE.RingGeometry(0.08, 0.105, 32).rotateX(-Math.PI / 2);
+const arReticleMaterial = new THREE.MeshBasicMaterial({ color: 0x2ecc71, transparent: true, opacity: 0.88, depthTest: false });
+const arReticle = new THREE.Mesh(arReticleGeometry, arReticleMaterial);
+arReticle.matrixAutoUpdate = false;
+arReticle.visible = false;
+arReticle.renderOrder = 30;
+arScene.add(arReticle);
+
+function setArStatus(message, visible = true) {
+  arStatusEl.textContent = message;
+  arStatusEl.hidden = !visible;
+}
+
+function setDesktopVisible(visible) {
+  world.visible = visible;
+  ball.visible = visible;
+  shieldMesh.visible = visible && hasShield;
+  gameOverEl.hidden = true;
+  levelCompleteEl.hidden = true;
+  pausePanelEl.hidden = true;
+  extraPanelEl.hidden = true;
+  shopPanelEl.hidden = true;
+}
+
+function disposeGroupChildren(group) {
+  while (group.children.length) {
+    const child = group.children.pop();
+    child.traverse((item) => {
+      if (item.geometry) item.geometry.dispose();
+      if (item.material) item.material.dispose();
+    });
+  }
+}
+
+function createArPlatform(y, index) {
+  const group = new THREE.Group();
+  group.position.y = y;
+  const segmentCount = 12;
+  const gapIndex = (index * 5) % segmentCount;
+  const arcSize = twoPi / segmentCount;
+  const material = new THREE.MeshStandardMaterial({ color: colors.blue, roughness: 0.56, side: THREE.DoubleSide });
+
+  for (let i = 0; i < segmentCount; i += 1) {
+    if (i === gapIndex) continue;
+    const mesh = new THREE.Mesh(
+      makeArcGeometry(platformInnerRadius, platformOuterRadius, i * arcSize, (i + 1) * arcSize, platformThickness),
+      material.clone()
+    );
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  arTowerRotator.add(group);
+  arPlatforms.push({ y, gapIndex, segmentCount, group });
+  arPlatforms.sort((a, b) => b.y - a.y);
+}
+
+function buildArTower() {
+  disposeGroupChildren(arRoot);
+  arBullets.length = 0;
+  arPlatforms.length = 0;
+  arTowerRotator.clear();
+  arTowerRotator.rotation.set(0, 0, 0);
+  arRoot.add(arTowerRotator);
+
+  arPillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(pillarRadius, pillarRadius, arPillarHeight, 48),
+    new THREE.MeshStandardMaterial({ color: colors.pillar, roughness: 0.55 })
+  );
+  arTowerRotator.add(arPillar);
+
+  arNextPlatformY = arPlatformBaseY;
+  arNextPlatformId = 0;
+  for (let i = 0; i < arVisiblePlatformCount; i += 1) {
+    createArPlatform(arNextPlatformY, arNextPlatformId);
+    arLowestPlatformY = arNextPlatformY;
+    arNextPlatformY -= arPlatformSpacing;
+    arNextPlatformId += 1;
+  }
+
+  arBall = new THREE.Mesh(
+    new THREE.SphereGeometry(ballRadius, 32, 24),
+    new THREE.MeshStandardMaterial({ color: colors.ball, roughness: 0.35, metalness: 0.05 })
+  );
+  arBall.position.set(0, arPlatformBaseY + arPlatformSpacing * 0.4, gameplayLaneRadius);
+  arBall.castShadow = true;
+  arRoot.add(arBall);
+  arBallVelocity = 0;
+  arAmmo = arMaxAmmo;
+  arIsShooting = false;
+  arFireCooldown = 0;
+  updateArPillarClip();
+}
+
+function placeArTowerFromReticle() {
+  if (!arReticle.visible) return;
+  buildArTower();
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  arReticle.matrix.decompose(pos, quat, new THREE.Vector3());
+  arRoot.position.copy(pos);
+  arRoot.quaternion.copy(quat);
+  arCurrentScale = arScale;
+  arRoot.scale.setScalar(arCurrentScale);
+  arRoot.visible = true;
+  arTowerPlaced = true;
+  arReticle.visible = false;
+  setArStatus('Hold grip + move to rotate. Trigger to fire. Both grips to scale.');
+}
+
+function updateArPillarClip() {
+  if (!arPillar || !arBall) return;
+  arPillar.position.y = arBall.position.y + arPillarTopOffset - arPillarHeight / 2;
+}
+
+function recycleArPlatforms() {
+  if (!arBall) return;
+  for (let i = arPlatforms.length - 1; i >= 0; i -= 1) {
+    const platform = arPlatforms[i];
+    if (platform.y > arBall.position.y + arPlatformSpacing * 2.4) {
+      arTowerRotator.remove(platform.group);
+      platform.group.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      });
+      arPlatforms.splice(i, 1);
+    }
+  }
+
+  while (arPlatforms.length < arVisiblePlatformCount) {
+    createArPlatform(arNextPlatformY, arNextPlatformId);
+    arLowestPlatformY = arNextPlatformY;
+    arNextPlatformY -= arPlatformSpacing;
+    arNextPlatformId += 1;
+  }
+}
+
+function fireArBullet() {
+  if (!arTowerPlaced || !arBall || arAmmo <= 0 || arScaleAdjusting) return false;
+  const mesh = new THREE.Mesh(bulletGeometry, bulletMaterial.clone());
+  mesh.position.copy(arBall.position);
+  mesh.position.y -= ballRadius + 0.08;
+  arRoot.add(mesh);
+  arBullets.push({ mesh, life: arBulletLifetime });
+  arAmmo -= 1;
+  arBallVelocity = Math.min(arBallVelocity + arShotImpulse, arShotVelocityCap);
+  playShootSound();
+  return true;
+}
+
+function updateArShooting(dt) {
+  if (!arIsShooting || arScaleAdjusting || !arTowerPlaced) return;
+  arFireCooldown -= dt;
+  while (arIsShooting && arFireCooldown <= 0) {
+    if (!fireArBullet()) {
+      arIsShooting = false;
+      arFireCooldown = 0;
+      break;
+    }
+    arFireCooldown += arFireInterval;
+  }
+}
+
+function getArControllerLocalX(controller) {
+  controller.getWorldPosition(arControllerPosition);
+  arControllerLocalPosition.copy(arControllerPosition);
+  arRoot.worldToLocal(arControllerLocalPosition);
+  return arControllerLocalPosition.x;
+}
+
+function arHapticPulse(intensity = 1.0, duration = 30) {
+  try {
+    const session = renderer.xr.getSession();
+    if (!session) return;
+    for (const source of session.inputSources) {
+      const gamepad = source.gamepad;
+      if (!gamepad) continue;
+      const actuator = gamepad.hapticActuators?.[0];
+      if (actuator?.pulse) {
+        actuator.pulse(intensity, duration).catch(() => {});
+      }
+    }
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function getArControllerDistance(a, b) {
+  const aPos = new THREE.Vector3();
+  const bPos = new THREE.Vector3();
+  a.getWorldPosition(aPos);
+  b.getWorldPosition(bPos);
+  return aPos.distanceTo(bPos);
+}
+
+function startArShooting() {
+  if (!arTowerPlaced || arScaleAdjusting) return;
+  arIsShooting = true;
+  if (arFireCooldown <= 0) {
+    fireArBullet();
+    arFireCooldown = arFireInterval;
+  }
+}
+
+function stopArShooting() {
+  arIsShooting = false;
+  arFireCooldown = 0;
+}
+
+function startArScaleAdjust() {
+  const controllers = [...arGripControllers];
+  if (controllers.length < 2 || arScaleAdjusting) return;
+  arScaleAdjusting = true;
+  arScaleStartDistance = Math.max(0.05, getArControllerDistance(controllers[0], controllers[1]));
+  arScaleStartValue = arCurrentScale;
+  arActiveGripController = null;
+  setArStatus('Scaling: move grips together/apart. Release one grip to resume.');
+}
+
+function stopArScaleAdjust() {
+  if (!arScaleAdjusting) return;
+  arScaleAdjusting = false;
+  setArStatus('Hold grip + move to rotate. Trigger to fire. Both grips to scale.');
+}
+
+function updateArScaleAdjust() {
+  if (!arScaleAdjusting) return;
+  const controllers = [...arGripControllers];
+  if (controllers.length < 2) {
+    stopArScaleAdjust();
+    return;
+  }
+  const distance = getArControllerDistance(controllers[0], controllers[1]);
+  arCurrentScale = THREE.MathUtils.clamp(arScaleStartValue * (distance / arScaleStartDistance), arMinScale, arScale);
+  arRoot.scale.setScalar(arCurrentScale);
+}
+
+let arActiveGripController = null;
+let arLastGripX = 0;
+
+function updateArGripRotation() {
+  if (!arTowerPlaced || !arActiveGripController || arScaleAdjusting) return;
+  const nextX = getArControllerLocalX(arActiveGripController);
+  arTowerRotator.rotation.y += (nextX - arLastGripX) * 3.6;
+  arLastGripX = nextX;
+  const step = Math.floor(arTowerRotator.rotation.y / THREE.MathUtils.degToRad(5));
+  if (step !== arLastHapticStep) {
+    arLastHapticStep = step;
+    arHapticPulse(1.0, 30);
+  }
+}
+
+function updateArReticle(frame) {
+  if (!frame || !arHitTestSource || !arReferenceSpace || arTowerPlaced) return;
+  const results = frame.getHitTestResults(arHitTestSource);
+  if (results.length > 0) {
+    const pose = results[0].getPose(arReferenceSpace);
+    arReticle.visible = true;
+    arReticle.matrix.fromArray(pose.transform.matrix);
+  } else {
+    arReticle.visible = false;
+  }
+}
+
+function updateArBall(dt) {
+  if (!arTowerPlaced || !arBall) return;
+  const previousY = arBall.position.y;
+  arBallVelocity += arGravity * dt;
+  arBall.position.y += arBallVelocity * dt;
+  arBall.rotation.x += dt * 7;
+
+  if (arBallVelocity < 0) {
+    const bottomBefore = previousY - ballRadius;
+    const bottomNow = arBall.position.y - ballRadius;
+    for (let i = 0; i < arPlatforms.length; i += 1) {
+      const platform = arPlatforms[i];
+      const platformTop = platform.y + platformThickness / 2;
+      if (bottomBefore < platformTop || bottomNow > platformTop) continue;
+
+      const localAngle = ((Math.atan2(arBall.position.z, arBall.position.x) - arTowerRotator.rotation.y) % twoPi + twoPi) % twoPi;
+      const segment = Math.floor(localAngle / (twoPi / platform.segmentCount));
+      if (segment === platform.gapIndex) continue;
+
+      arBall.position.y = platformTop + ballRadius;
+      arBallVelocity = arBounceVelocity;
+      arAmmo = arMaxAmmo;
+      playBounceSound();
+      break;
+    }
+  }
+
+  recycleArPlatforms();
+  updateArPillarClip();
+}
+
+function updateArBullets(dt) {
+  for (let i = arBullets.length - 1; i >= 0; i -= 1) {
+    const bullet = arBullets[i];
+    bullet.life -= dt;
+    bullet.mesh.position.y -= arBulletSpeed * dt;
+    bullet.mesh.scale.setScalar(Math.max(0.35, bullet.life / arBulletLifetime));
+    if (bullet.life <= 0 || bullet.mesh.position.y < arBall.position.y - 4.5) {
+      if (bullet.mesh.parent) bullet.mesh.parent.remove(bullet.mesh);
+      bullet.mesh.material.dispose();
+      arBullets.splice(i, 1);
+    }
+  }
+}
+
+function updateArMode(dt, frame) {
+  updateArReticle(frame);
+  updateArGripRotation();
+  updateArScaleAdjust();
+  updateArShooting(dt);
+  updateArBall(dt);
+  updateArBullets(dt);
+}
+
+function endArMode() {
+  arModeActive = false;
+  arTowerPlaced = false;
+  arReferenceSpace = null;
+  arViewerSpace = null;
+  arHitTestSource = null;
+  arActiveGripController = null;
+  arGripControllers.clear();
+  arScaleAdjusting = false;
+  stopArShooting();
+  arReticle.visible = false;
+  arRoot.visible = false;
+  disposeGroupChildren(arRoot);
+  setDesktopVisible(true);
+  document.body.classList.remove('ar-active');
+  scene.background = new THREE.Color(0xeef7ff);
+  setArStatus('', false);
+}
+
+async function startArMode() {
+  if (!navigator.xr) {
+    setArStatus('WebXR is not available in this browser. Open this site in Meta Quest Browser.');
+    return;
+  }
+
+  arModeButton.disabled = true;
+  setArStatus('Checking AR support...');
+  try {
+    const supported = await navigator.xr.isSessionSupported('immersive-ar');
+    if (!supported) {
+      setArStatus('Immersive AR is not supported here. Try Meta Quest Browser on Quest 3.');
+      return;
+    }
+
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['local-floor', 'dom-overlay'],
+      domOverlay: { root: document.body },
+    });
+
+    stopShooting();
+    isPaused = true;
+    setDesktopVisible(false);
+    document.body.classList.add('ar-active');
+    scene.background = null;
+    arModeActive = true;
+    arTowerPlaced = false;
+    arRoot.visible = false;
+    setArStatus('Move the reticle onto a surface, then pull the trigger to place the tower.');
+
+    try {
+      renderer.xr.setReferenceSpaceType('local-floor');
+    } catch (_) {
+      renderer.xr.setReferenceSpaceType('local');
+    }
+    await renderer.xr.setSession(session);
+
+    arReferenceSpace = await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
+    arViewerSpace = await session.requestReferenceSpace('viewer');
+    arHitTestSource = await session.requestHitTestSource({ space: arViewerSpace });
+
+    session.addEventListener('end', () => {
+      isPaused = false;
+      endArMode();
+    }, { once: true });
+  } catch (error) {
+    arModeActive = false;
+    setDesktopVisible(true);
+    document.body.classList.remove('ar-active');
+    setArStatus(`Could not start AR: ${error.message || error}`);
+  } finally {
+    arModeButton.disabled = false;
+  }
+}
+
+for (let i = 0; i < 2; i += 1) {
+  const controller = renderer.xr.getController(i);
+  controller.addEventListener('selectstart', () => {
+    if (!arModeActive) return;
+    if (!arTowerPlaced) {
+      placeArTowerFromReticle();
+      return;
+    }
+    startArShooting();
+  });
+  controller.addEventListener('selectend', () => {
+    if (!arModeActive) return;
+    stopArShooting();
+  });
+  controller.addEventListener('squeezestart', () => {
+    if (!arModeActive || !arTowerPlaced) return;
+    arGripControllers.add(controller);
+    if (arGripControllers.size >= 2) {
+      startArScaleAdjust();
+      return;
+    }
+    arActiveGripController = controller;
+    arLastGripX = getArControllerLocalX(controller);
+    arLastHapticStep = Math.floor(arTowerRotator.rotation.y / THREE.MathUtils.degToRad(5));
+  });
+  controller.addEventListener('squeezeend', () => {
+    if (!arModeActive) return;
+    arGripControllers.delete(controller);
+    if (arScaleAdjusting && arGripControllers.size < 2) {
+      stopArScaleAdjust();
+    }
+    if (arActiveGripController === controller) {
+      arActiveGripController = arGripControllers.size > 0 ? [...arGripControllers][0] : null;
+      if (arActiveGripController) arLastGripX = getArControllerLocalX(arActiveGripController);
+    }
+  });
+  arScene.add(controller);
+}
+
 function onPointerDown(event) {
   if (isPaused || isLevelComplete) return;
   if (isGameOver) {
@@ -3557,6 +4043,11 @@ coinAttractionInput.addEventListener('input', () => {
   setCoinAttractionRadius(coinAttractionInput.value);
 });
 
+arModeButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  startArMode();
+});
+
 window.addEventListener('pointerdown', onPointerDown);
 window.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
@@ -3571,9 +4062,14 @@ window.addEventListener('resize', () => {
 
 const clock = new THREE.Clock();
 
-function animate() {
-  requestAnimationFrame(animate);
+function animate(_time, frame) {
   const realDt = Math.min(clock.getDelta(), 0.033);
+
+  if (arModeActive) {
+    updateArMode(realDt, frame);
+    renderer.render(arScene, camera);
+    return;
+  }
 
   if (damageSlowdownTimer > 0) {
     damageSlowdownTimer = Math.max(0, damageSlowdownTimer - realDt);
@@ -3638,4 +4134,4 @@ function animate() {
 rebuildAmmoUI();
 syncOptionsPanel();
 resetGame();
-animate();
+renderer.setAnimationLoop(animate);
