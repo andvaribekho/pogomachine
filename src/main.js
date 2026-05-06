@@ -132,6 +132,11 @@ const goldBlockHitsToBreak = 5;
 const goldCubesPerHit = 2;
 const grayTileHitsToBreak = 3;
 const ledgeRadialLength = gameplayLaneRadius - pillarRadius;
+const spikeCycleDuration = 5.4;
+const spikeUpDuration = 2;
+const spikeMoveDuration = 0.2;
+const spikeDownDuration = 3;
+const platformSpikeHeight = 0.5;
 
 const ballStartY = 1.9;
 let ballVelocity = 0;
@@ -193,7 +198,9 @@ const coinPickups = [];
 const cannons = [];
 const bounceCubes = [];
 const ledges = [];
+const spikeTraps = [];
 let nextBounceCubeOrder = 1;
+let spikePlatformsThisLevel = 0;
 
 let shakeIntensity = 0;
 let shakeDecay = 0;
@@ -243,6 +250,10 @@ const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roug
 const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
 const goldBlockMaterial = new THREE.MeshStandardMaterial({ color: colors.gold, emissive: 0x8a5a00, emissiveIntensity: 0.25, roughness: 0.28, metalness: 0.65 });
 const ledgeMaterial = new THREE.MeshStandardMaterial({ color: 0x546e7a, roughness: 0.58, metalness: 0.05 });
+const spikeHoleGeometry = new THREE.BoxGeometry(0.26, 0.018, 0.26);
+const platformSpikeGeometry = new THREE.ConeGeometry(0.16, platformSpikeHeight, 4);
+const spikeHoleMaterial = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.82 });
+const platformSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
 const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
 const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
 const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
@@ -675,6 +686,60 @@ function makeGrayCrackLines(startAngle, endAngle, stage) {
   return group;
 }
 
+function shouldCreateSpikePlatform(id, isFinal) {
+  if (isFinal || id <= 1) return false;
+  const target = getLevelTarget();
+  const required = Math.ceil(target * 0.1);
+  if (spikePlatformsThisLevel >= required) return Math.random() < 0.045;
+  const remainingNonFinalPlatforms = Math.max(0, target - id);
+  const remainingRequired = required - spikePlatformsThisLevel;
+  return id % 10 === 5 || remainingNonFinalPlatforms <= remainingRequired;
+}
+
+function createSpikeTrap(platformGroup, tile) {
+  const group = new THREE.Group();
+  const spikes = [];
+  const centerAngle = (tile.start + tile.end) / 2;
+  const arcSpan = tile.end - tile.start;
+  const angleStep = Math.min(0.09, arcSpan * 0.2);
+  const angles = [centerAngle - angleStep, centerAngle, centerAngle + angleStep];
+
+  for (const angle of angles) {
+    const hole = new THREE.Mesh(spikeHoleGeometry.clone(), spikeHoleMaterial.clone());
+    hole.position.set(
+      Math.cos(angle) * gameplayLaneRadius,
+      platformThickness / 2 + 0.012,
+      Math.sin(angle) * gameplayLaneRadius
+    );
+    hole.rotation.y = -angle + Math.PI / 4;
+    group.add(hole);
+
+    const spike = new THREE.Mesh(platformSpikeGeometry.clone(), platformSpikeMaterial.clone());
+    spike.position.set(
+      Math.cos(angle) * gameplayLaneRadius,
+      platformThickness / 2 + platformSpikeHeight / 2 - 0.02,
+      Math.sin(angle) * gameplayLaneRadius
+    );
+    spike.rotation.y = -angle + Math.PI / 4;
+    spike.castShadow = true;
+    group.add(spike);
+    spikes.push({ mesh: spike, angle, colliderPosition: new THREE.Vector3() });
+  }
+
+  platformGroup.add(group);
+  tile.spikeTrap = true;
+  const trap = { group, platformGroup, spikes, timer: Math.random() * spikeCycleDuration, raiseAmount: 1 };
+  spikeTraps.push(trap);
+  spikePlatformsThisLevel += 1;
+}
+
+function maybeCreateSpikeTrap(platformGroup, tiles, id, isFinal) {
+  if (!shouldCreateSpikePlatform(id, isFinal)) return;
+  const validTiles = tiles.filter(tile => tile.type === 'blue' && !tile.broken && !tile.spikeTrap);
+  if (!validTiles.length) return;
+  createSpikeTrap(platformGroup, validTiles[Math.floor(Math.random() * validTiles.length)]);
+}
+
 function getPlatformTileColor(type) {
   if (type === 'red') return colors.red;
   if (type === 'finish') return colors.finish;
@@ -722,9 +787,11 @@ function createPlatform(y, id, options = {}) {
     mesh.receiveShadow = true;
     group.add(mesh);
     if (crackLine) group.add(crackLine);
-    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false, hitCount: 0 };
+    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false, hitCount: 0, spikeTrap: false };
     tiles.push(tile);
   }
+
+  maybeCreateSpikeTrap(group, tiles, id, isFinal);
 
   if (!isFinal) {
     for (let c = 0; c < 3; c += 1) {
@@ -732,7 +799,7 @@ function createPlatform(y, id, options = {}) {
         const crateAngle = Math.random() * twoPi;
         const crateRadius = gameplayLaneRadius;
         const crateTile = tiles.find(t =>
-          t.type === 'blue' && !t.broken &&
+          t.type === 'blue' && !t.broken && !t.spikeTrap &&
           angleInArc(crateAngle, t.start, t.end)
         );
         if (crateTile) {
@@ -743,7 +810,7 @@ function createPlatform(y, id, options = {}) {
   }
 
   if (!isFinal && !shopTilePlat && id === 3) {
-    const shopTile = tiles.find(t => t.type === 'blue' && !t.broken);
+    const shopTile = tiles.find(t => t.type === 'blue' && !t.broken && !t.spikeTrap);
     if (shopTile) {
       shopTile.type = 'shop';
       shopTile.material.color.setHex(colors.shop);
@@ -1122,7 +1189,7 @@ function createSpikedBall(y, id) {
 }
 
 function isWormTile(tile) {
-  return !tile.broken && (tile.type === 'blue' || tile.type === 'red');
+  return !tile.broken && !tile.spikeTrap && (tile.type === 'blue' || tile.type === 'red');
 }
 
 function isWormAngleValid(platformData, angle) {
@@ -2601,6 +2668,48 @@ function updateEnemies(dt) {
   }
 }
 
+function getSpikeRaiseAmount(timer) {
+  const cycleTime = timer % spikeCycleDuration;
+  const moveDownStart = spikeUpDuration;
+  const downStart = moveDownStart + spikeMoveDuration;
+  const moveUpStart = downStart + spikeDownDuration;
+
+  if (cycleTime < moveDownStart) return 1;
+  if (cycleTime < downStart) return 1 - (cycleTime - moveDownStart) / spikeMoveDuration;
+  if (cycleTime < moveUpStart) return 0;
+  return (cycleTime - moveUpStart) / spikeMoveDuration;
+}
+
+function updateSpikeTraps(dt) {
+  const upY = platformThickness / 2 + platformSpikeHeight / 2 - 0.02;
+  const downY = platformThickness / 2 - platformSpikeHeight / 2 - 0.16;
+  const damageRadius = ballRadius + 0.16;
+  const damageRadiusSq = damageRadius * damageRadius;
+
+  for (const trap of spikeTraps) {
+    trap.timer = (trap.timer + dt) % spikeCycleDuration;
+    trap.raiseAmount = getSpikeRaiseAmount(trap.timer);
+
+    for (const spike of trap.spikes) {
+      spike.mesh.position.y = downY + (upY - downY) * trap.raiseAmount;
+      spike.colliderPosition.set(
+        Math.cos(spike.angle) * gameplayLaneRadius,
+        spike.mesh.position.y + platformSpikeHeight * 0.22,
+        Math.sin(spike.angle) * gameplayLaneRadius
+      );
+      trap.platformGroup.localToWorld(spike.colliderPosition);
+    }
+
+    if (trap.raiseAmount < 0.55) continue;
+    for (const spike of trap.spikes) {
+      if (ball.position.distanceToSquared(spike.colliderPosition) <= damageRadiusSq) {
+        applyDamage();
+        break;
+      }
+    }
+  }
+}
+
 function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i -= 1) {
     const particle = particles[i];
@@ -2694,6 +2803,7 @@ function clearTower() {
   goldBlocks.length = 0;
   cannons.length = 0;
   ledges.length = 0;
+  spikeTraps.length = 0;
 
   while (platforms.length) {
     const platform = platforms.pop();
@@ -2712,6 +2822,7 @@ function startLevel() {
   ballVelocity = 0;
   platformsPassedThisLevel = 0;
   nextPlatformId = 0;
+  spikePlatformsThisLevel = 0;
   bounceVelocity = 7.7;
   world.rotation.y = 0;
   drag.targetRotation = 0;
@@ -3210,6 +3321,9 @@ function recyclePlatforms() {
       detachBounceCubesFromPlatform(platform);
       for (let g = goldBlocks.length - 1; g >= 0; g -= 1) {
         if (goldBlocks[g].platformData === platform) goldBlocks.splice(g, 1);
+      }
+      for (let s = spikeTraps.length - 1; s >= 0; s -= 1) {
+        if (spikeTraps[s].platformGroup === platform.group) spikeTraps.splice(s, 1);
       }
       world.remove(platform.group);
       platform.group.traverse((child) => {
@@ -4113,6 +4227,7 @@ function animate(_time, frame) {
     updateLedges(previousY);
     handlePlatformUndersideCollision(previousY);
     handlePlatformCollision(previousY);
+    updateSpikeTraps(dt);
     updateBullets(dt);
     updateEnemies(dt);
     updateCannons(dt);
