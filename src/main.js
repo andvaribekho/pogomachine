@@ -163,6 +163,7 @@ const colors = {
   crate: 0x9c6b30,
   worm: 0x8bc34a,
   shop: 0xffc107,
+  acid: 0x76ff03,
 };
 
 const platformInnerRadius = 0.95;
@@ -251,6 +252,7 @@ let isLevelComplete = false;
 let hp = maxHp;
 let coins = 0;
 let damageCooldown = 0;
+let acidStompImmunity = 0;
 let damageFlashTimer = 0;
 let pendingInvulnerability = false;
 let pendingShield = false;
@@ -291,9 +293,11 @@ const ledges = [];
 const pillarSpikes = [];
 const spikeTraps = [];
 const sawBlades = [];
+const acidPuddles = [];
 let nextBounceCubeOrder = 1;
 let spikePlatformsThisLevel = 0;
 let groundWormsSinceTurtle = 0;
+let acidSnailsThisLevel = 0;
 
 let shakeIntensity = 0;
 let shakeDecay = 0;
@@ -338,6 +342,10 @@ const jellyfishBodyGeometry = new THREE.SphereGeometry(0.24, 18, 12);
 const jellyfishTentacleGeometry = new THREE.CylinderGeometry(0.018, 0.012, 0.38, 6);
 const pufferBodyGeometry = new THREE.SphereGeometry(0.25, 18, 12);
 const porcupineBodyGeometry = new THREE.SphereGeometry(0.25, 16, 12);
+const acidPuddleGeometry = new THREE.CircleGeometry(0.22, 20);
+const acidSnailBodyGeometry = new THREE.SphereGeometry(0.22, 14, 10);
+const acidSnailShellGeometry = new THREE.SphereGeometry(0.28, 16, 12);
+const groundEnemyFootOffset = 0.2;
 const shockwaveGeometry = new THREE.SphereGeometry(1, 24, 16);
 const pillarLaserRingGeometry = new THREE.TorusGeometry(gameplayLaneRadius, 0.035, 8, 96);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
@@ -380,6 +388,10 @@ const jellyfishMaterial = new THREE.MeshStandardMaterial({ color: 0x9c27b0, emis
 const pufferMaterial = new THREE.MeshStandardMaterial({ color: 0xffc107, emissive: 0xff6f00, emissiveIntensity: 0.22, roughness: 0.48 });
 const porcupineMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.56, metalness: 0.04 });
 const porcupineSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
+const acidPuddleMaterial = new THREE.MeshStandardMaterial({ color: colors.acid, emissive: 0x2e7d32, emissiveIntensity: 0.45, roughness: 0.6, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+const acidSnailBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.55, metalness: 0.05 });
+const acidSnailShellMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.5, metalness: 0.08 });
+const acidSnailCrackedShellMaterial = new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.5, metalness: 0.08, emissive: 0x3e2723, emissiveIntensity: 0.3 });
 const shockwaveMaterial = new THREE.MeshBasicMaterial({ color: 0xff9800, transparent: true, opacity: 0.42, wireframe: true, depthWrite: false });
 const pillarLaserRingMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.72 });
 const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
@@ -1168,6 +1180,7 @@ function spawnPillarLedgesForLevel() {
 
 function createBatMesh() {
   const group = new THREE.Group();
+  group.scale.setScalar(1.105);
   const body = new THREE.Mesh(batBodyGeometry, batBodyMaterial.clone());
   body.scale.set(1, 0.72, 1.25);
   group.add(body);
@@ -1329,6 +1342,136 @@ spike.rotation.z = 0;
   return { group, material, spikeMaterial, spikes };
 }
 
+function createAcidSnailMesh() {
+  const group = new THREE.Group();
+  const bodyMaterial = acidSnailBodyMaterial.clone();
+  const body = new THREE.Mesh(acidSnailBodyGeometry, bodyMaterial);
+  body.scale.set(1, 0.6, 1.3);
+  body.position.set(0.12, 0.05, 0);
+  body.castShadow = true;
+  group.add(body);
+
+  const shellMaterial = acidSnailShellMaterial.clone();
+  const shell = new THREE.Mesh(acidSnailShellGeometry, shellMaterial);
+  shell.scale.set(1, 0.7, 1);
+  shell.position.set(-0.05, 0.1, 0);
+  shell.castShadow = true;
+  group.add(shell);
+
+  const eyeGeo = new THREE.SphereGeometry(0.04, 8, 6);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.3 });
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(0.26, 0.1, 0.07);
+  group.add(eyeL);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat.clone());
+  eyeR.position.set(0.26, 0.1, -0.07);
+  group.add(eyeR);
+
+  return { group, bodyMaterial, shellMaterial, shell };
+}
+
+function spawnAcidPuddle(platformData, angle, radius, isDeath) {
+  const size = isDeath ? 0.44 : 0.22;
+  const geometry = new THREE.CircleGeometry(size, 20);
+  const material = acidPuddleMaterial.clone();
+  material.opacity = 0.85;
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(
+    Math.cos(angle) * radius,
+    platformThickness / 2 + 0.005,
+    Math.sin(angle) * radius
+  );
+  platformData.group.add(mesh);
+  acidPuddles.push({
+    mesh,
+    material,
+    platformData,
+    angle,
+    radius,
+    age: 0,
+    fullLife: isDeath ? 3 : 2,
+    shrinkLife: 1,
+    isDeath,
+    baseSize: size,
+    colliderPosition: new THREE.Vector3(),
+  });
+}
+
+function updateAcidPuddles(dt) {
+  const damageRadius = getPlayerHitboxRadius() + 0.22;
+  const damageRadiusSq = damageRadius * damageRadius;
+
+  for (let i = acidPuddles.length - 1; i >= 0; i -= 1) {
+    const puddle = acidPuddles[i];
+    puddle.age += dt;
+    const totalLife = puddle.fullLife + puddle.shrinkLife;
+
+    if (puddle.age > puddle.fullLife) {
+      const shrinkT = (puddle.age - puddle.fullLife) / puddle.shrinkLife;
+      const scale = Math.max(0, 1 - shrinkT);
+      puddle.mesh.scale.setScalar(scale);
+      puddle.material.opacity = 0.85 * scale;
+    }
+
+    if (puddle.age >= totalLife) {
+      puddle.mesh.removeFromParent();
+      puddle.mesh.geometry.dispose();
+      puddle.material.dispose();
+      acidPuddles.splice(i, 1);
+      continue;
+    }
+
+    puddle.colliderPosition.set(
+      Math.cos(puddle.angle) * puddle.radius,
+      platformThickness / 2 + 0.02,
+      Math.sin(puddle.angle) * puddle.radius
+    );
+    puddle.platformData.group.localToWorld(puddle.colliderPosition);
+
+    if (acidStompImmunity <= 0 && ball.position.distanceToSquared(puddle.colliderPosition) <= damageRadiusSq) {
+      applyDamage();
+    }
+  }
+}
+
+function clearAcidPuddles() {
+  while (acidPuddles.length) {
+    const puddle = acidPuddles.pop();
+    puddle.mesh.removeFromParent();
+    puddle.mesh.geometry.dispose();
+    puddle.material.dispose();
+  }
+}
+
+function createAcidSnail(platformData, id, tile) {
+  const snail = createAcidSnailMesh();
+  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
+  const enemy = {
+    type: 'acidSnail',
+    id,
+    group: snail.group,
+    bodyMaterial: snail.bodyMaterial,
+    shellMaterial: snail.shellMaterial,
+    shell: snail.shell,
+    platformData,
+    y: platformData.group.position.y + platformThickness / 2 + 0.2,
+    localAngle: start,
+    angle: start,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: gameplayLaneRadius,
+    speed: 0.3 + Math.random() * 0.2,
+    collisionRadius: 0.36,
+    hp: 999,
+    flashTimer: 0,
+    shellIntact: true,
+    trailTimer: 0,
+  };
+  positionEnemy(enemy);
+  scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
 function createCannonMesh() {
   const group = new THREE.Group();
   const base = new THREE.Mesh(cannonBaseGeometry.clone(), cannonMaterial.clone());
@@ -1416,7 +1559,7 @@ function positionEnemy(enemy) {
     return;
   }
 
-  if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine') {
+  if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') {
     const localPosition = _enemyLocalPosition.set(
       Math.cos(enemy.localAngle) * enemy.orbitRadius,
       platformThickness / 2 + 0.2,
@@ -1453,8 +1596,8 @@ function createBat(y, id) {
     arcSpan,
     direction: Math.random() < 0.5 ? 1 : -1,
     orbitRadius: getBulletLaneRadius(),
-    speed: 0.55 + Math.random() * 0.75,
-    collisionRadius: 0.35,
+    speed: (0.55 + Math.random() * 0.75) * 0.6,
+    collisionRadius: 0.38,
     flapOffset: Math.random() * twoPi,
   };
   positionEnemy(enemy);
@@ -1489,7 +1632,7 @@ function createSpikedBall(y, id) {
 }
 
 function isWormTile(tile) {
-  return !tile.broken && !tile.spikeTrap && (tile.type === 'blue' || tile.type === 'red');
+  return !tile.broken && !tile.spikeTrap && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'gray' || tile.type === 'crackedBlue');
 }
 
 function isWormAngleValid(platformData, angle) {
@@ -1505,6 +1648,54 @@ function isWormBodySupported(platformData, angle, radius) {
     if (!isWormAngleValid(platformData, backwardAngle)) return false;
   }
   return true;
+}
+
+function isGroundEnemy(enemy) {
+  return enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail';
+}
+
+function startGroundEnemyFall(enemy) {
+  if (enemy.falling) return;
+  enemy.falling = true;
+  enemy.fallVelocity = -0.2;
+  enemy.platformData = null;
+}
+
+function updateGroundEnemyFall(enemy, dt) {
+  const previousY = enemy.group.position.y;
+  enemy.fallVelocity = (enemy.fallVelocity ?? -0.2) - 14 * dt;
+  enemy.group.position.y += enemy.fallVelocity * dt;
+
+  for (const platform of platforms) {
+    const platformTop = platformY(platform) + platformThickness / 2;
+    const footBefore = previousY - groundEnemyFootOffset;
+    const footNow = enemy.group.position.y - groundEnemyFootOffset;
+    if (footBefore < platformTop || footNow > platformTop || enemy.fallVelocity >= 0) continue;
+
+    _enemyFallLocalPosition.copy(enemy.group.position);
+    _enemyFallLocalPosition.y = platformTop + groundEnemyFootOffset;
+    const tile = getTileAtWorldPoint(platform, _enemyFallLocalPosition);
+    if (!tile || !isWormTile(tile)) continue;
+
+    platform.group.worldToLocal(_enemyFallLocalPosition);
+    enemy.platformData = platform;
+    enemy.localAngle = (Math.atan2(_enemyFallLocalPosition.z, _enemyFallLocalPosition.x) + twoPi) % twoPi;
+    enemy.angle = enemy.localAngle;
+    enemy.orbitRadius = THREE.MathUtils.clamp(Math.hypot(_enemyFallLocalPosition.x, _enemyFallLocalPosition.z), platformInnerRadius + 0.12, platformOuterRadius - 0.12);
+    enemy.y = platformTop + groundEnemyFootOffset;
+    enemy.falling = false;
+    enemy.fallVelocity = 0;
+    positionEnemy(enemy);
+    return;
+  }
+}
+
+function detachGroundEnemiesFromTile(platform, tile) {
+  for (const enemy of enemies) {
+    if (!isGroundEnemy(enemy) || enemy.falling || enemy.platformData !== platform) continue;
+    const angle = (enemy.localAngle + twoPi) % twoPi;
+    if (angleInArc(angle, tile.start, tile.end)) startGroundEnemyFall(enemy);
+  }
 }
 
 function createWorm(platformData, id, tile) {
@@ -1767,6 +1958,14 @@ function maybeSpawnEnemiesForSection(platformData, id) {
 if (id > 9 && platformData.tiles.length > 0 && Math.random() < 0.1 + difficulty * 0.12) {
     const porcupineTiles = platformData.tiles.filter(isWormTile);
     if (porcupineTiles.length > 0) createPorcupine(platformData, id, porcupineTiles[Math.floor(Math.random() * porcupineTiles.length)]);
+  }
+
+  if (acidSnailsThisLevel < 2 && id >= 3 && !platformData.final && platformData.tiles.length > 0) {
+    const snailTiles = platformData.tiles.filter(isWormTile);
+    if (snailTiles.length > 0) {
+      createAcidSnail(platformData, id, snailTiles[Math.floor(Math.random() * snailTiles.length)]);
+      acidSnailsThisLevel += 1;
+    }
   }
 
   if (id > 8 && Math.random() < 0.18 + difficulty * 0.12) {
@@ -2597,6 +2796,7 @@ function breakGrayTile(platform, tile) {
   platform.group.localToWorld(breakPosition);
 
   detachBounceCubesFromTile(platform, tile);
+  detachGroundEnemiesFromTile(platform, tile);
   tile.broken = true;
   disposeTile(tile);
   playGlassBreakSound();
@@ -2629,6 +2829,7 @@ function breakCrackedTile(platform, tile) {
   platform.group.localToWorld(breakPosition);
 
   detachBounceCubesFromTile(platform, tile);
+  detachGroundEnemiesFromTile(platform, tile);
   tile.broken = true;
   disposeTile(tile);
   playGlassBreakSound();
@@ -2673,6 +2874,7 @@ function killEnemyAt(index, explosionColor) {
 
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
+  if (enemy.type === 'acidSnail') return;
   if (enemy.type === 'bat') {
     killEnemyAt(enemyIndex, colors.particle);
     return;
@@ -2860,6 +3062,10 @@ function checkBulletEnemyHit(bullet) {
       if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
       if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
       if (bullet.hitEnemies) bullet.hitEnemies.add(enemy);
+      if (enemy.type === 'acidSnail') {
+        spawnBulletImpact(bullet.mesh.position.clone());
+        return true;
+      }
       damageEnemy(i);
       return true;
     }
@@ -3213,8 +3419,10 @@ function updateEnemies(dt) {
     if (enemy.type === 'pillarWorm') {
       enemy.localAngle += enemy.speed * enemy.direction * dt;
       enemy.angle = enemy.localAngle;
-    } else if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine') {
-      if (enemy.type === 'porcupine') {
+    } else if (isGroundEnemy(enemy)) {
+      if (enemy.falling) {
+        updateGroundEnemyFall(enemy, dt);
+      } else if (enemy.type === 'porcupine') {
         enemy.stateTimer -= dt;
         if (enemy.state === 'walk' && enemy.stateTimer <= 0) {
           enemy.state = 'spikes';
@@ -3230,13 +3438,24 @@ function updateEnemies(dt) {
           for (const spike of enemy.spikes) spike.visible = false;
         }
       }
-      const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
-      if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius)) {
-        enemy.localAngle = (nextAngle + twoPi) % twoPi;
-      } else {
-        enemy.direction *= -1;
+      if (!enemy.falling) {
+        const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
+        if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius)) {
+          enemy.localAngle = (nextAngle + twoPi) % twoPi;
+        } else if (isWormBodySupported(enemy.platformData, enemy.localAngle, enemy.orbitRadius)) {
+          enemy.direction *= -1;
+        } else {
+          startGroundEnemyFall(enemy);
+        }
+        enemy.angle = enemy.localAngle;
+        if (enemy.type === 'acidSnail' && !enemy.falling) {
+          enemy.trailTimer += dt;
+          if (enemy.trailTimer >= 0.25) {
+            enemy.trailTimer = 0;
+            spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, false);
+          }
+        }
       }
-      enemy.angle = enemy.localAngle;
     } else {
       const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
       const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
@@ -3249,7 +3468,7 @@ function updateEnemies(dt) {
         enemy.direction = 1;
       }
     }
-    positionEnemy(enemy);
+    if (!enemy.falling) positionEnemy(enemy);
 
     if (enemy.type === 'jellyfish' || enemy.type === 'pufferBomb') {
       enemy.y = enemy.baseY + Math.sin(scaledTime * 2 + enemy.bobOffset) * 0.18;
@@ -3283,6 +3502,13 @@ function updateEnemies(dt) {
         enemy.material.emissiveIntensity = 0;
         enemy.spikeMaterial.emissiveIntensity = 0;
       }
+    } else if (enemy.type === 'acidSnail') {
+      if (enemy.flashTimer > 0) {
+        enemy.flashTimer -= dt;
+      } else {
+        enemy.bodyMaterial.emissiveIntensity = 0;
+        enemy.shellMaterial.emissiveIntensity = 0;
+      }
     } else {
       enemy.group.rotation.x += dt * 1.1;
       enemy.group.rotation.z += dt * 0.8;
@@ -3294,12 +3520,40 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
       if (enemy.type === 'turtle') applyDamage();
       if (enemy.type === 'porcupine' && enemy.spikesOut) {
         applyDamage();
         ballVelocity = Math.max(ballVelocity, stompImpulse * 0.55);
         continue;
+      }
+      if (enemy.type === 'acidSnail') {
+        acidStompImmunity = 0.6;
+        enemy.flashTimer = 0.25;
+        enemy.bodyMaterial.emissive.setHex(0xff0000);
+        enemy.bodyMaterial.emissiveIntensity = 0.9;
+        enemy.shellMaterial.emissive.setHex(0xff0000);
+        enemy.shellMaterial.emissiveIntensity = 0.9;
+        if (enemy.shellIntact) {
+          enemy.shellIntact = false;
+          enemy.shell.material = acidSnailCrackedShellMaterial.clone();
+          spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, true);
+          if (reloadAmmo()) {
+            spawnFloatingText('Reload', ball.position);
+            playReloadSound();
+          }
+          ballVelocity = Math.max(ballVelocity, stompImpulse * 0.7);
+          continue;
+        } else {
+          spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, true);
+          killEnemyAt(i, colors.acid);
+          if (reloadAmmo()) {
+            spawnFloatingText('Reload', ball.position);
+            playReloadSound();
+          }
+          ballVelocity = Math.max(ballVelocity, stompImpulse);
+          continue;
+        }
       }
       killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'turtle' ? colors.red : colors.particle);
       if (reloadAmmo()) {
@@ -3540,6 +3794,7 @@ function clearTower() {
   clearBullets();
   clearEnemiesAndParticles();
   clearCoinPickups();
+  clearAcidPuddles();
   deactivateAllBounceCubes();
   crates.length = 0;
   goldBlocks.length = 0;
@@ -3587,6 +3842,8 @@ function startLevel() {
   nextPlatformId = 0;
   spikePlatformsThisLevel = 0;
   groundWormsSinceTurtle = 0;
+  acidSnailsThisLevel = 0;
+  clearAcidPuddles();
   bounceVelocity = 7.7;
   world.rotation.y = 0;
   drag.targetRotation = 0;
@@ -3752,6 +4009,7 @@ function applyDamage() {
 
 function updatePowerups(dt) {
   if (damageCooldown > 0) damageCooldown = Math.max(0, damageCooldown - dt);
+  if (acidStompImmunity > 0) acidStompImmunity = Math.max(0, acidStompImmunity - dt);
   if (damageFlashTimer > 0) damageFlashTimer = Math.max(0, damageFlashTimer - dt);
 
   if (hasShield) {
@@ -3943,6 +4201,7 @@ const _ballTopCollider = new THREE.Vector3();
 const _ballLeftCollider = new THREE.Vector3();
 const _ballRightCollider = new THREE.Vector3();
 const _enemyLocalPosition = new THREE.Vector3();
+const _enemyFallLocalPosition = new THREE.Vector3();
 const _enemySegmentWorldPosition = new THREE.Vector3();
 const _platformUndersidePoint = new THREE.Vector3();
 const _enemyProjectedPosition = new THREE.Vector3();
@@ -5176,6 +5435,7 @@ function animate(_time, frame) {
     updatePillarLaserRings(dt);
     updateBullets(dt);
     updateEnemies(dt);
+    updateAcidPuddles(dt);
     updateShockwaves(dt);
     updateCannons(dt);
     updateGoldBlocks(dt);
