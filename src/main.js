@@ -86,11 +86,16 @@ const stompImpulseInput = document.querySelector('#stomp-impulse-input');
 const hitboxScaleInput = document.querySelector('#hitbox-scale-input');
 const cannonChargeInput = document.querySelector('#cannon-charge-input');
 const cannonCooldownInput = document.querySelector('#cannon-cooldown-input');
+const laserOnInput = document.querySelector('#laser-on-input');
+const laserOffInput = document.querySelector('#laser-off-input');
 const coinAttractionInput = document.querySelector('#coin-attraction-input');
 const levelCompleteEl = document.querySelector('#level-complete');
 const completeSummaryEl = document.querySelector('#complete-summary');
 const rewardHpButton = document.querySelector('#reward-hp');
 const rewardAmmoButton = document.querySelector('#reward-ammo');
+const rewardPiercingButton = document.querySelector('#reward-piercing');
+const rewardVampiricButton = document.querySelector('#reward-vampiric');
+const rewardComboShieldButton = document.querySelector('#reward-combo-shield');
 const buyInvulnerabilityButton = document.querySelector('#buy-invulnerability');
 const buyShieldButton = document.querySelector('#buy-shield');
 const shopStatusEl = document.querySelector('#shop-status');
@@ -112,6 +117,9 @@ const shopBulletBtn = document.querySelector('#shop-bullet');
 const shopHpBtn = document.querySelector('#shop-hp');
 const shopArmorBtn = document.querySelector('#shop-armor');
 const shopInvulnBtn = document.querySelector('#shop-invuln');
+const shopPiercingBtn = document.querySelector('#shop-piercing');
+const shopVampiricBtn = document.querySelector('#shop-vampiric');
+const shopComboShieldBtn = document.querySelector('#shop-combo-shield');
 const closeShopButton = document.querySelector('#close-shop-button');
 const arModeButton = document.querySelector('#ar-mode-button');
 const arStatusEl = document.querySelector('#ar-status');
@@ -176,6 +184,8 @@ const defaultStompImpulse = 5.4;
 const defaultPlayerHitboxScale = 0.3;
 const defaultCannonChargeTime = 3;
 const defaultCannonCooldown = 5;
+const defaultLaserRingOnTime = 2;
+const defaultLaserRingOffTime = 2;
 const defaultCoinAttractionRadius = 1.05;
 const goldBlocksPerLevel = 3;
 const ledgesPerLevel = 14;
@@ -186,6 +196,10 @@ const sawBladeLaneRadius = pillarRadius + 0.24;
 const maxHp = 5;
 const invulnerabilityCost = 20;
 const shieldCost = 20;
+const piercingCost = 25;
+const vampiricCost = 30;
+const comboShieldCost = 25;
+const comboShieldThreshold = 5;
 const bulletSpeed = 22;
 const bulletLifetime = 1.05;
 const baseShotUpwardVelocityCap = 2.4;
@@ -211,6 +225,8 @@ let terminalVelocity = defaultTerminalVelocity;
 let stompImpulse = defaultStompImpulse;
 let cannonChargeTime = defaultCannonChargeTime;
 let cannonCooldown = defaultCannonCooldown;
+let laserRingOnTime = defaultLaserRingOnTime;
+let laserRingOffTime = defaultLaserRingOffTime;
 let bounceVelocity = 7.7;
 let score = 0;
 let currentLevel = 1;
@@ -254,6 +270,11 @@ let combo = 0;
 let selectedWeapon = 'machinegun';
 let nextShotId = 1;
 let scaledTime = 0;
+let piercingBulletsUnlocked = false;
+let vampiricLifeUnlocked = false;
+let comboShieldUnlocked = false;
+let vampiricKillCount = 0;
+let comboShieldAwardedThisCombo = false;
 const platforms = [];
 const bullets = [];
 const enemies = [];
@@ -263,6 +284,8 @@ const crates = [];
 const goldBlocks = [];
 const coinPickups = [];
 const cannons = [];
+const shockwaves = [];
+const pillarLaserRings = [];
 const bounceCubes = [];
 const ledges = [];
 const pillarSpikes = [];
@@ -311,6 +334,12 @@ const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
 const turtleBodyGeometry = new THREE.SphereGeometry(0.22, 16, 12);
 const turtleShellGeometry = new THREE.SphereGeometry(0.28, 18, 12);
 const turtleSpikeGeometry = new THREE.ConeGeometry(0.055, 0.18, 8);
+const jellyfishBodyGeometry = new THREE.SphereGeometry(0.24, 18, 12);
+const jellyfishTentacleGeometry = new THREE.CylinderGeometry(0.018, 0.012, 0.38, 6);
+const pufferBodyGeometry = new THREE.SphereGeometry(0.25, 18, 12);
+const porcupineBodyGeometry = new THREE.SphereGeometry(0.25, 16, 12);
+const shockwaveGeometry = new THREE.SphereGeometry(1, 24, 16);
+const pillarLaserRingGeometry = new THREE.TorusGeometry(gameplayLaneRadius, 0.035, 8, 96);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
 const coinPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xb8860b, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.7 });
 const shieldGeometry = new THREE.BoxGeometry(0.42, 0.14, 0.42);
@@ -347,6 +376,12 @@ const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughn
 const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
 const turtleBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.5, metalness: 0.05 });
 const turtleShellMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, emissive: 0x7a0000, emissiveIntensity: 0.18, roughness: 0.44, metalness: 0.08 });
+const jellyfishMaterial = new THREE.MeshStandardMaterial({ color: 0x9c27b0, emissive: 0x4a148c, emissiveIntensity: 0.28, roughness: 0.36, transparent: true, opacity: 0.82 });
+const pufferMaterial = new THREE.MeshStandardMaterial({ color: 0xffc107, emissive: 0xff6f00, emissiveIntensity: 0.22, roughness: 0.48 });
+const porcupineMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.56, metalness: 0.04 });
+const porcupineSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
+const shockwaveMaterial = new THREE.MeshBasicMaterial({ color: 0xff9800, transparent: true, opacity: 0.42, wireframe: true, depthWrite: false });
+const pillarLaserRingMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.72 });
 const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
 const cannonWarningMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.85 });
 const laserMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.65 });
@@ -615,6 +650,38 @@ function playGlassBreakSound() {
     gain.connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.22);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playPufferExplosionSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const boom = ctx.createOscillator();
+    const boomGain = ctx.createGain();
+    boom.type = 'sawtooth';
+    boom.frequency.setValueAtTime(180, now);
+    boom.frequency.exponentialRampToValueAtTime(45, now + 0.38);
+    boomGain.gain.setValueAtTime(0.34, now);
+    boomGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+    boom.connect(boomGain);
+    boomGain.connect(ctx.destination);
+    boom.start(now);
+    boom.stop(now + 0.42);
+
+    const pop = ctx.createOscillator();
+    const popGain = ctx.createGain();
+    pop.type = 'square';
+    pop.frequency.setValueAtTime(520, now);
+    pop.frequency.exponentialRampToValueAtTime(120, now + 0.09);
+    popGain.gain.setValueAtTime(0.22, now);
+    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    pop.connect(popGain);
+    popGain.connect(ctx.destination);
+    pop.start(now);
+    pop.stop(now + 0.12);
   } catch (_) {
     /* silent */
   }
@@ -1201,6 +1268,67 @@ function createTurtleMesh() {
   return { group, materials };
 }
 
+function createJellyfishMesh() {
+  const group = new THREE.Group();
+  const material = jellyfishMaterial.clone();
+  const body = new THREE.Mesh(jellyfishBodyGeometry, material);
+  body.scale.set(1, 0.7, 1);
+  body.castShadow = true;
+  group.add(body);
+  for (let i = 0; i < 5; i += 1) {
+    const tentacle = new THREE.Mesh(jellyfishTentacleGeometry, material);
+    const angle = (i / 5) * twoPi;
+    tentacle.position.set(Math.cos(angle) * 0.12, -0.25, Math.sin(angle) * 0.12);
+    group.add(tentacle);
+  }
+  return { group, material };
+}
+
+function createPufferBombMesh() {
+  const group = new THREE.Group();
+  const material = pufferMaterial.clone();
+  const body = new THREE.Mesh(pufferBodyGeometry, material);
+  body.castShadow = true;
+  group.add(body);
+  for (let i = 0; i < 8; i += 1) {
+    const angle = (i / 8) * twoPi;
+    const spike = new THREE.Mesh(turtleSpikeGeometry, material);
+    const dir = new THREE.Vector3(Math.cos(angle), 0.2, Math.sin(angle)).normalize();
+    spike.position.copy(dir).multiplyScalar(0.24);
+    spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    group.add(spike);
+  }
+  return { group, material };
+}
+
+function createPorcupineMesh() {
+  const group = new THREE.Group();
+  const material = porcupineMaterial.clone();
+  const spikeMaterial = porcupineSpikeMaterial.clone();
+  const body = new THREE.Mesh(porcupineBodyGeometry, material);
+  body.scale.set(1.25, 0.55, 0.8);
+  body.castShadow = true;
+  group.add(body);
+
+  const head = new THREE.Mesh(wormHeadGeometry, material);
+  head.scale.set(0.72, 0.62, 0.72);
+  head.position.set(0.28, 0.03, 0);
+  head.castShadow = true;
+  group.add(head);
+
+  const spikes = [];
+  for (let i = 0; i < 7; i += 1) {
+    const spike = new THREE.Mesh(turtleSpikeGeometry, spikeMaterial);
+    const x = -0.22 + i * 0.075;
+    spike.position.set(x, 0.18 + Math.sin(i) * 0.025, (i % 2 === 0 ? -1 : 1) * 0.09);
+spike.rotation.z = 0;
+    spike.visible = false;
+    group.add(spike);
+    spikes.push(spike);
+  }
+  return { group, material, spikeMaterial, spikes };
+}
+
 function createCannonMesh() {
   const group = new THREE.Group();
   const base = new THREE.Mesh(cannonBaseGeometry.clone(), cannonMaterial.clone());
@@ -1288,7 +1416,7 @@ function positionEnemy(enemy) {
     return;
   }
 
-  if (enemy.type === 'worm' || enemy.type === 'turtle') {
+  if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine') {
     const localPosition = _enemyLocalPosition.set(
       Math.cos(enemy.localAngle) * enemy.orbitRadius,
       platformThickness / 2 + 0.2,
@@ -1430,6 +1558,56 @@ function createPillarWorm(y, id) {
   enemies.push(enemy);
 }
 
+function createFloatingEnemy(type, y, id) {
+  return createFloatingEnemyWithOptions(type, y, id);
+}
+
+function createFloatingEnemyWithOptions(type, y, id, options = {}) {
+  const isJellyfish = type === 'jellyfish';
+  const built = isJellyfish ? createJellyfishMesh() : createPufferBombMesh();
+  const arcSpan = 0.95 + Math.random() * 0.35;
+  const arcCenter = getBulletLaneAngle();
+  const angle = arcCenter + (Math.random() - 0.5) * arcSpan;
+  const enemy = {
+    type,
+    id,
+    group: built.group,
+    material: built.material,
+    y,
+    baseY: y,
+    angle: options.angle ?? angle,
+    arcCenter,
+    arcSpan: options.arcSpan ?? arcSpan,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: options.orbitRadius ?? getBulletLaneRadius() + (Math.random() - 0.5) * 0.25,
+    speed: options.speed ?? (isJellyfish ? 0.28 + Math.random() * 0.28 : 0.18 + Math.random() * 0.2),
+    collisionRadius: options.collisionRadius ?? (isJellyfish ? 0.34 : 0.38),
+    hp: options.hp ?? (isJellyfish ? 2 : 2),
+    flashTimer: 0,
+    bobOffset: Math.random() * twoPi,
+    splitOnDeath: options.splitOnDeath ?? (isJellyfish && !options.small),
+  };
+  if (options.small) enemy.group.scale.setScalar(0.62);
+  positionEnemy(enemy);
+  scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
+function splitJellyfish(enemy, position) {
+  if (!enemy.splitOnDeath) return;
+  for (let i = 0; i < 2; i += 1) {
+    createFloatingEnemyWithOptions('jellyfish', position.y + (i - 0.5) * 0.25, enemy.id + 1000 + i, {
+      small: true,
+      hp: 1,
+      collisionRadius: enemy.collisionRadius * 0.65,
+      orbitRadius: Math.max(pillarRadius + 0.8, enemy.orbitRadius + (i - 0.5) * 0.45),
+      angle: enemy.angle + (i - 0.5) * 0.35,
+      arcSpan: enemy.arcSpan * 0.8,
+      speed: enemy.speed * 1.35,
+    });
+  }
+}
+
 function createTurtle(platformData, id, tile) {
   const turtle = createTurtleMesh();
   const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
@@ -1448,6 +1626,36 @@ function createTurtle(platformData, id, tile) {
     collisionRadius: 0.4,
     hp: 3,
     flashTimer: 0,
+  };
+  positionEnemy(enemy);
+  scene.add(enemy.group);
+  enemies.push(enemy);
+}
+
+function createPorcupine(platformData, id, tile) {
+  const porcupine = createPorcupineMesh();
+  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
+  const enemy = {
+    type: 'porcupine',
+    id,
+    group: porcupine.group,
+    material: porcupine.material,
+    spikeMaterial: porcupine.spikeMaterial,
+    spikes: porcupine.spikes,
+    platformData,
+    y: platformData.group.position.y + platformThickness / 2 + 0.2,
+    localAngle: start,
+    angle: start,
+    direction: Math.random() < 0.5 ? 1 : -1,
+    orbitRadius: (platformInnerRadius + platformOuterRadius) / 2 + (Math.random() - 0.5) * 0.35,
+    baseSpeed: 0.28 + Math.random() * 0.24,
+    speed: 0.28 + Math.random() * 0.24,
+    collisionRadius: 0.38,
+    hp: 3,
+    flashTimer: 0,
+    state: 'walk',
+    stateTimer: 1.5 + Math.random() * 1.4,
+    spikesOut: false,
   };
   positionEnemy(enemy);
   scene.add(enemy.group);
@@ -1486,6 +1694,23 @@ function spawnSawBladesForLevel() {
     const angle = (i / sawBladesPerLevel) * twoPi + Math.random() * 0.35;
     createSawBlade(y, angle, Math.random() * 0.35);
   }
+}
+
+function createPillarLaserRing(y) {
+  const mesh = new THREE.Mesh(pillarLaserRingGeometry, pillarLaserRingMaterial.clone());
+  mesh.position.y = y;
+  mesh.rotation.x = Math.PI / 2;
+  mesh.renderOrder = 3;
+  world.add(mesh);
+  pillarLaserRings.push({ mesh, y, timer: Math.random() * (laserRingOnTime + laserRingOffTime) });
+}
+
+function spawnPillarLaserRingsForLevel() {
+  const target = getLevelTarget();
+  const count = Math.min(5, Math.max(1, Math.floor(currentLevel / 2)));
+  const used = new Set();
+  while (used.size < count) used.add(2 + Math.floor(Math.random() * Math.max(1, target - 3)));
+  for (const interval of used) createPillarLaserRing(-(interval + 0.5) * platformSpacing);
 }
 
 function maybeSpawnWorms(platformData, id) {
@@ -1530,6 +1755,19 @@ function maybeSpawnEnemiesForSection(platformData, id) {
   }
 
   maybeSpawnWorms(platformData, id);
+
+  if (id > 7 && Math.random() < 0.1 + difficulty * 0.14) {
+    createFloatingEnemy('jellyfish', sectionY + (Math.random() - 0.5) * 1.2, id);
+  }
+
+  if (id > 12 && Math.random() < 0.07 + difficulty * 0.1) {
+    createFloatingEnemy('pufferBomb', sectionY + (Math.random() - 0.5) * 1.2, id);
+  }
+
+if (id > 9 && platformData.tiles.length > 0 && Math.random() < 0.1 + difficulty * 0.12) {
+    const porcupineTiles = platformData.tiles.filter(isWormTile);
+    if (porcupineTiles.length > 0) createPorcupine(platformData, id, porcupineTiles[Math.floor(Math.random() * porcupineTiles.length)]);
+  }
 
   if (id > 8 && Math.random() < 0.18 + difficulty * 0.12) {
     createPillarWorm(sectionY - 0.45 + Math.random() * 0.9, id);
@@ -1580,11 +1818,20 @@ function reloadAmmo() {
 function increaseCombo() {
   combo += 1;
   spawnFloatingText(String(combo), ball.position, 0xffc107, true);
+  if (comboShieldUnlocked && combo >= comboShieldThreshold && !comboShieldAwardedThisCombo) {
+    comboShieldAwardedThisCombo = true;
+    if (!hasShield) {
+      hasShield = true;
+      shieldMesh.visible = true;
+      spawnFloatingText('COMBO SHIELD', ball.position, 0x80deea, true);
+    }
+  }
 }
 
 function resetCombo(showLoss = true) {
   if (combo <= 0) return;
   combo = 0;
+  comboShieldAwardedThisCombo = false;
   if (showLoss) {
     spawnFloatingText('Combo Loss', ball.position, 0xff7043, true);
   }
@@ -1650,6 +1897,22 @@ function setCannonCooldown(value) {
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
 }
 
+function setLaserRingOnTime(value) {
+  const nextValue = Number.parseFloat(value);
+  laserRingOnTime = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0.2, 10)
+    : defaultLaserRingOnTime;
+  laserOnInput.value = laserRingOnTime.toFixed(1);
+}
+
+function setLaserRingOffTime(value) {
+  const nextValue = Number.parseFloat(value);
+  laserRingOffTime = Number.isFinite(nextValue)
+    ? THREE.MathUtils.clamp(nextValue, 0.2, 10)
+    : defaultLaserRingOffTime;
+  laserOffInput.value = laserRingOffTime.toFixed(1);
+}
+
 function setCoinAttractionRadius(value) {
   const nextValue = Number.parseFloat(value);
   coinAttractionRadius = Number.isFinite(nextValue)
@@ -1691,6 +1954,8 @@ function syncOptionsPanel() {
   hitboxScaleInput.value = playerHitboxScale.toFixed(2);
   cannonChargeInput.value = cannonChargeTime.toFixed(1);
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
+  laserOnInput.value = laserRingOnTime.toFixed(1);
+  laserOffInput.value = laserRingOffTime.toFixed(1);
   coinAttractionInput.value = coinAttractionRadius.toFixed(2);
   impulseBResetInput.value = impulseBResetSpeed.toFixed(1);
   impulseBShotgunInput.value = impulseBShotgunImpulse.toFixed(1);
@@ -1791,7 +2056,7 @@ function spawnBullet(velocity = new THREE.Vector3(0, -bulletSpeed, 0), shotId = 
   mesh.position.y -= ballRadius + 0.06;
   mesh.renderOrder = 5;
   scene.add(mesh);
-  bullets.push({ mesh, life: bulletLifetime, velocity: velocity.clone(), shotgunShotId: shotId });
+  bullets.push({ mesh, life: bulletLifetime, velocity: velocity.clone(), shotgunShotId: shotId, hitEnemies: new Set() });
 }
 
 function fireMachinegun() {
@@ -1884,7 +2149,7 @@ function updateBullets(dt) {
     bullet.mesh.position.addScaledVector(bullet.velocity, dt);
     bullet.mesh.scale.setScalar(Math.max(0.45, bullet.life / bulletLifetime));
 
-    if (checkBulletEnemyHit(bullet)) {
+    if (checkBulletEnemyHit(bullet) && !piercingBulletsUnlocked) {
       bullet.mesh.removeFromParent();
       bullets.splice(i, 1);
       continue;
@@ -2381,6 +2646,8 @@ function removeEnemyAt(index, explosionColor) {
   disposeEnemy(enemy);
   enemies.splice(index, 1);
   spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
+  if (enemy.type === 'jellyfish') splitJellyfish(enemy, position);
+  if (enemy.type === 'pufferBomb') explodePuffer(position);
   spawnBounceCubes(position);
 }
 
@@ -2391,6 +2658,17 @@ function killEnemyAt(index, explosionColor) {
   scoreEl.textContent = String(score);
   removeEnemyAt(index, explosionColor);
   increaseCombo();
+  if (vampiricLifeUnlocked) {
+    vampiricKillCount += 1;
+    if (vampiricKillCount >= 10) {
+      vampiricKillCount = 0;
+      if (hp < maxHp) {
+        hp += 1;
+        updateHeartsUI();
+        spawnFloatingText('VAMP +1', ball.position, 0xe91e63, true);
+      }
+    }
+  }
 }
 
 function damageEnemy(enemyIndex) {
@@ -2412,6 +2690,11 @@ function damageEnemy(enemyIndex) {
       material.emissive.setHex(0xffeb3b);
       material.emissiveIntensity = 0.8;
     }
+  } else if (enemy.type === 'porcupine') {
+    enemy.material.emissive.setHex(0xffeb3b);
+    enemy.material.emissiveIntensity = 0.8;
+    enemy.spikeMaterial.emissive.setHex(0xffeb3b);
+    enemy.spikeMaterial.emissiveIntensity = 0.8;
   } else {
     enemy.material.emissive.setHex(0xff0000);
     enemy.material.emissiveIntensity = 0.9;
@@ -2420,6 +2703,16 @@ function damageEnemy(enemyIndex) {
   if (enemy.hp <= 0) {
     killEnemyAt(enemyIndex, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : colors.red);
   }
+}
+
+function explodePuffer(position) {
+  playPufferExplosionSound();
+  const material = shockwaveMaterial.clone();
+  const mesh = new THREE.Mesh(shockwaveGeometry, material);
+  mesh.position.copy(position);
+  mesh.scale.setScalar(0.1);
+  scene.add(mesh);
+  shockwaves.push({ mesh, material, position: position.clone(), radius: 0.1, maxRadius: 2.2, life: 0.55, maxLife: 0.55, damagedEnemies: new Set(), damagedPlayer: false });
 }
 
 function getBallColliderPositions() {
@@ -2559,12 +2852,14 @@ function checkBallGoldBlockStomp(previousY) {
 function checkBulletEnemyHit(bullet) {
   for (let i = enemies.length - 1; i >= 0; i -= 1) {
     const enemy = enemies[i];
+    if (bullet.hitEnemies?.has(enemy)) continue;
     const hitRadius = enemy.collisionRadius + 0.12;
     if (enemy.type === 'pillarWorm' && !enemy.interactable) continue;
     const collisionPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
     if (bullet.mesh.position.distanceToSquared(collisionPosition) <= hitRadius * hitRadius) {
       if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
       if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
+      if (bullet.hitEnemies) bullet.hitEnemies.add(enemy);
       damageEnemy(i);
       return true;
     }
@@ -2918,7 +3213,23 @@ function updateEnemies(dt) {
     if (enemy.type === 'pillarWorm') {
       enemy.localAngle += enemy.speed * enemy.direction * dt;
       enemy.angle = enemy.localAngle;
-    } else if (enemy.type === 'worm' || enemy.type === 'turtle') {
+    } else if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine') {
+      if (enemy.type === 'porcupine') {
+        enemy.stateTimer -= dt;
+        if (enemy.state === 'walk' && enemy.stateTimer <= 0) {
+          enemy.state = 'spikes';
+          enemy.stateTimer = 2;
+          enemy.speed = 0;
+          enemy.spikesOut = true;
+          for (const spike of enemy.spikes) spike.visible = true;
+        } else if (enemy.state === 'spikes' && enemy.stateTimer <= 0) {
+          enemy.state = 'walk';
+          enemy.stateTimer = 1.5 + Math.random() * 1.4;
+          enemy.speed = enemy.baseSpeed;
+          enemy.spikesOut = false;
+          for (const spike of enemy.spikes) spike.visible = false;
+        }
+      }
       const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
       if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius)) {
         enemy.localAngle = (nextAngle + twoPi) % twoPi;
@@ -2940,6 +3251,11 @@ function updateEnemies(dt) {
     }
     positionEnemy(enemy);
 
+    if (enemy.type === 'jellyfish' || enemy.type === 'pufferBomb') {
+      enemy.y = enemy.baseY + Math.sin(scaledTime * 2 + enemy.bobOffset) * 0.18;
+      if (enemy.type === 'pufferBomb') enemy.group.scale.setScalar(1 + Math.sin(scaledTime * 4 + enemy.bobOffset) * 0.08);
+    }
+
     if (enemy.type === 'bat') {
       const flap = Math.sin(scaledTime * 18 + enemy.flapOffset) * 0.55;
       enemy.leftWing.rotation.z = -0.28 - flap;
@@ -2960,6 +3276,13 @@ function updateEnemies(dt) {
       } else {
         for (const material of enemy.materials) material.emissiveIntensity = material === enemy.materials[1] ? 0.18 : 0;
       }
+    } else if (enemy.type === 'porcupine') {
+      if (enemy.flashTimer > 0) {
+        enemy.flashTimer -= dt;
+      } else {
+        enemy.material.emissiveIntensity = 0;
+        enemy.spikeMaterial.emissiveIntensity = 0;
+      }
     } else {
       enemy.group.rotation.x += dt * 1.1;
       enemy.group.rotation.z += dt * 0.8;
@@ -2971,8 +3294,13 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
       if (enemy.type === 'turtle') applyDamage();
+      if (enemy.type === 'porcupine' && enemy.spikesOut) {
+        applyDamage();
+        ballVelocity = Math.max(ballVelocity, stompImpulse * 0.55);
+        continue;
+      }
       killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'turtle' ? colors.red : colors.particle);
       if (reloadAmmo()) {
         spawnFloatingText('Reload', ball.position);
@@ -3066,6 +3394,59 @@ function updateSawBlades(dt) {
   }
 }
 
+function updateShockwaves(dt) {
+  for (let i = shockwaves.length - 1; i >= 0; i -= 1) {
+    const shockwave = shockwaves[i];
+    const previousRadius = shockwave.radius;
+    shockwave.life -= dt;
+    const progress = 1 - Math.max(0, shockwave.life / shockwave.maxLife);
+    shockwave.radius = THREE.MathUtils.lerp(0.1, shockwave.maxRadius, progress);
+    shockwave.mesh.scale.setScalar(shockwave.radius);
+    shockwave.material.opacity = Math.max(0, 0.42 * (1 - progress));
+    if (!shockwave.damagedPlayer && ball.position.distanceToSquared(shockwave.position) <= (shockwave.radius + getPlayerHitboxRadius()) ** 2) {
+      shockwave.damagedPlayer = true;
+      applyDamage();
+    }
+    for (let e = enemies.length - 1; e >= 0; e -= 1) {
+      const enemy = enemies[e];
+      if (shockwave.damagedEnemies.has(enemy)) continue;
+      const pos = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+      const effectiveRadius = Math.max(shockwave.radius, previousRadius) + enemy.collisionRadius + 0.35;
+      if (pos.distanceToSquared(shockwave.position) <= effectiveRadius * effectiveRadius) {
+        shockwave.damagedEnemies.add(enemy);
+        damageEnemy(e);
+      }
+    }
+    if (shockwave.life <= 0) {
+      shockwave.mesh.removeFromParent();
+      shockwave.material.dispose();
+      shockwaves.splice(i, 1);
+    }
+  }
+}
+
+function updatePillarLaserRings(dt) {
+  const hitbox = getPlayerHitboxRadius();
+  for (let i = pillarLaserRings.length - 1; i >= 0; i -= 1) {
+    const ring = pillarLaserRings[i];
+    const cycle = laserRingOnTime + laserRingOffTime;
+    ring.timer = (ring.timer + dt) % cycle;
+    const active = ring.timer < laserRingOnTime;
+    ring.mesh.visible = true;
+    ring.mesh.material.opacity = active ? 0.72 : 0.09;
+    if (active) {
+      const vertical = Math.abs(ball.position.y - ring.mesh.position.y);
+      const radial = Math.abs(Math.hypot(ball.position.x, ball.position.z) - gameplayLaneRadius);
+      if (vertical <= hitbox + 0.06 && radial <= hitbox + 0.18) applyDamage();
+    }
+    if (ring.mesh.position.y > ball.position.y + 15) {
+      ring.mesh.removeFromParent();
+      ring.mesh.material.dispose();
+      pillarLaserRings.splice(i, 1);
+    }
+  }
+}
+
 function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i -= 1) {
     const particle = particles[i];
@@ -3148,6 +3529,11 @@ function clearEnemiesAndParticles() {
     item.texture.dispose();
     item.material.dispose();
   }
+  while (shockwaves.length) {
+    const shockwave = shockwaves.pop();
+    shockwave.mesh.removeFromParent();
+    shockwave.material.dispose();
+  }
 }
 
 function clearTower() {
@@ -3160,6 +3546,11 @@ function clearTower() {
   cannons.length = 0;
   ledges.length = 0;
   spikeTraps.length = 0;
+  while (pillarLaserRings.length) {
+    const ring = pillarLaserRings.pop();
+    ring.mesh.removeFromParent();
+    ring.mesh.material.dispose();
+  }
   while (pillarSpikes.length) {
     const ps = pillarSpikes.pop();
     world.remove(ps.group);
@@ -3232,6 +3623,7 @@ function startLevel() {
   spawnPillarLedgesForLevel();
   spawnPillarSpikesForLevel();
   spawnSawBladesForLevel();
+  spawnPillarLaserRingsForLevel();
 }
 
 function resetGame() {
@@ -3247,6 +3639,11 @@ function resetGame() {
   damageSlowdownTimer = 0;
   timeScale = 1;
   grayscaleAmount = 0;
+  piercingBulletsUnlocked = false;
+  vampiricLifeUnlocked = false;
+  comboShieldUnlocked = false;
+  vampiricKillCount = 0;
+  comboShieldAwardedThisCombo = false;
   scoreSubmittedToLeaderboard = false;
   if (scene.background) scene.background.setHex(0xeef7ff);
   updatePersistentUI();
@@ -3411,6 +3808,9 @@ function updateShopUI() {
   shopHpBtn.disabled = coins < 20 || hp >= maxHp;
   shopArmorBtn.disabled = coins < 20 || hasShield;
   shopInvulnBtn.disabled = coins < 30 || invulnerabilityTimer > 0;
+  shopPiercingBtn.disabled = coins < piercingCost || piercingBulletsUnlocked;
+  shopVampiricBtn.disabled = coins < vampiricCost || vampiricLifeUnlocked;
+  shopComboShieldBtn.disabled = coins < comboShieldCost || comboShieldUnlocked;
 }
 
 function openShop() {
@@ -3474,10 +3874,40 @@ function buyShopInvuln() {
   playRewardSound();
 }
 
+function buyShopPiercing() {
+  if (coins < piercingCost || piercingBulletsUnlocked) return;
+  coins -= piercingCost;
+  piercingBulletsUnlocked = true;
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
+function buyShopVampiric() {
+  if (coins < vampiricCost || vampiricLifeUnlocked) return;
+  coins -= vampiricCost;
+  vampiricLifeUnlocked = true;
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
+function buyShopComboShield() {
+  if (coins < comboShieldCost || comboShieldUnlocked) return;
+  coins -= comboShieldCost;
+  comboShieldUnlocked = true;
+  updateCoinsUI();
+  updateShopUI();
+  playRewardSound();
+}
+
 function updateLevelCompleteUI() {
   completeSummaryEl.textContent = `Level ${currentLevel} cleared. Coins: ${coins}. Choose one reward, then start Level ${currentLevel + 1}.`;
   rewardHpButton.disabled = rewardChosen || hp >= maxHp;
   rewardAmmoButton.disabled = rewardChosen;
+  rewardPiercingButton.disabled = rewardChosen || piercingBulletsUnlocked;
+  rewardVampiricButton.disabled = rewardChosen || vampiricLifeUnlocked;
+  rewardComboShieldButton.disabled = rewardChosen || comboShieldUnlocked;
   nextLevelButton.disabled = !rewardChosen;
   buyInvulnerabilityButton.disabled = coins < invulnerabilityCost || pendingInvulnerability;
   buyShieldButton.disabled = coins < shieldCost || pendingShield || hasShield;
@@ -4508,6 +4938,9 @@ shopBulletBtn.addEventListener('click', buyShopBullet);
 shopHpBtn.addEventListener('click', buyShopHp);
 shopArmorBtn.addEventListener('click', buyShopArmor);
 shopInvulnBtn.addEventListener('click', buyShopInvuln);
+shopPiercingBtn.addEventListener('click', buyShopPiercing);
+shopVampiricBtn.addEventListener('click', buyShopVampiric);
+shopComboShieldBtn.addEventListener('click', buyShopComboShield);
 closeShopButton.addEventListener('click', closeShop);
 shopPanelEl.addEventListener('pointerdown', (event) => {
   event.stopPropagation();
@@ -4619,6 +5052,30 @@ stompImpulseInput.addEventListener('input', () => {
   setStompImpulse(stompImpulseInput.value);
 });
 
+rewardPiercingButton.addEventListener('click', () => {
+  if (rewardChosen || piercingBulletsUnlocked) return;
+  playRewardSound();
+  piercingBulletsUnlocked = true;
+  rewardChosen = true;
+  updateLevelCompleteUI();
+});
+
+rewardVampiricButton.addEventListener('click', () => {
+  if (rewardChosen || vampiricLifeUnlocked) return;
+  playRewardSound();
+  vampiricLifeUnlocked = true;
+  rewardChosen = true;
+  updateLevelCompleteUI();
+});
+
+rewardComboShieldButton.addEventListener('click', () => {
+  if (rewardChosen || comboShieldUnlocked) return;
+  playRewardSound();
+  comboShieldUnlocked = true;
+  rewardChosen = true;
+  updateLevelCompleteUI();
+});
+
 hitboxScaleInput.addEventListener('input', () => {
   setPlayerHitboxScale(hitboxScaleInput.value);
 });
@@ -4629,6 +5086,14 @@ cannonChargeInput.addEventListener('input', () => {
 
 cannonCooldownInput.addEventListener('input', () => {
   setCannonCooldown(cannonCooldownInput.value);
+});
+
+laserOnInput.addEventListener('input', () => {
+  setLaserRingOnTime(laserOnInput.value);
+});
+
+laserOffInput.addEventListener('input', () => {
+  setLaserRingOffTime(laserOffInput.value);
 });
 
 coinAttractionInput.addEventListener('input', () => {
@@ -4708,8 +5173,10 @@ function animate(_time, frame) {
     updateSpikeTraps(dt);
     updatePillarSpikes(dt);
     updateSawBlades(dt);
+    updatePillarLaserRings(dt);
     updateBullets(dt);
     updateEnemies(dt);
+    updateShockwaves(dt);
     updateCannons(dt);
     updateGoldBlocks(dt);
     updateCoinPickups(dt);

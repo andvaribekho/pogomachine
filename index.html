@@ -78,6 +78,14 @@
           <input id="cannon-cooldown-input" type="number" min="0" max="20" step="0.5" />
         </label>
         <label>
+          Laser Ring On Time
+          <input id="laser-on-input" type="number" min="0.2" max="10" step="0.1" />
+        </label>
+        <label>
+          Laser Ring Off Time
+          <input id="laser-off-input" type="number" min="0.2" max="10" step="0.1" />
+        </label>
+        <label>
           Coin Attraction Radius
           <input id="coin-attraction-input" type="number" min="0.1" max="5" step="0.05" />
         </label>
@@ -141,6 +149,18 @@
             <span class="shop-item-name">Invulnerability</span>
             <span class="shop-item-cost">30 coins</span>
           </button>
+          <button id="shop-piercing" type="button" class="shop-item-btn">
+            <span class="shop-item-name">Piercing Bullets</span>
+            <span class="shop-item-cost">25 coins</span>
+          </button>
+          <button id="shop-vampiric" type="button" class="shop-item-btn">
+            <span class="shop-item-name">Vampiric Life</span>
+            <span class="shop-item-cost">30 coins</span>
+          </button>
+          <button id="shop-combo-shield" type="button" class="shop-item-btn">
+            <span class="shop-item-name">Combo Shield</span>
+            <span class="shop-item-cost">25 coins</span>
+          </button>
         </div>
         <button id="close-shop-button" type="button">Close</button>
       </div>
@@ -175,6 +195,9 @@
         <div class="reward-grid">
           <button id="reward-hp" type="button">Recover 1 HP</button>
           <button id="reward-ammo" type="button">+1 Bullet</button>
+          <button id="reward-piercing" type="button">Piercing Bullets</button>
+          <button id="reward-vampiric" type="button">Vampiric Life</button>
+          <button id="reward-combo-shield" type="button">Combo Shield</button>
         </div>
         <h2>Powerup Shop</h2>
         <div class="shop-grid">
