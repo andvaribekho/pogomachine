@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vite": "latest",
-    "three": "latest"
-  },
-  "devDependencies": {}
+    "firebase": "^12.13.0",
+    "three": "latest",
+    "vite": "latest"
+  }
 }

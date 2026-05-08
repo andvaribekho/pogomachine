@@ -66,6 +66,10 @@
           <input id="stomp-impulse-input" type="number" min="0" max="20" step="0.1" />
         </label>
         <label>
+          Player hitbox size
+          <input id="hitbox-scale-input" type="number" min="0.1" max="1" step="0.05" />
+        </label>
+        <label>
           Cannon Charge Time
           <input id="cannon-charge-input" type="number" min="0.5" max="10" step="0.1" />
         </label>
@@ -145,6 +149,24 @@
       <h1>Game Over</h1>
       <p id="final-score">0</p>
       <p id="restart-hint">Click or tap to restart</p>
+    </div>
+    <div id="leaderboard-panel" hidden>
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2>Leaderboard</h2>
+          <span id="leaderboard-score-label">Score: 0</span>
+        </div>
+        <div id="leaderboard-name-section">
+          <label id="leaderboard-name-label">Enter your name</label>
+          <input id="leaderboard-name-input" type="text" maxlength="12" placeholder="Your name" />
+          <button id="leaderboard-submit-btn" type="button">Submit Score</button>
+        </div>
+        <div id="leaderboard-submitted" hidden>
+          <p id="leaderboard-rank-msg"></p>
+        </div>
+        <div id="leaderboard-list"></div>
+        <button id="leaderboard-close-btn" type="button">Close</button>
+      </div>
     </div>
     <div id="level-complete" hidden>
       <div class="complete-card">

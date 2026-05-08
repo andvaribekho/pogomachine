@@ -695,6 +695,170 @@ body.ar-active #ar-mode-button {
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.72);
   color: #fff;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   pointer-events: none;
+}
+
+#leaderboard-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(21, 32, 43, 0.54);
+  backdrop-filter: blur(10px);
+}
+
+#leaderboard-panel[hidden] {
+  display: none;
+}
+
+#leaderboard-score-label {
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(21, 32, 43, 0.56);
+}
+
+#leaderboard-name-section {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+#leaderboard-name-label {
+  font-size: 15px;
+  font-weight: 900;
+  text-align: center;
+}
+
+#leaderboard-name-input {
+  padding: 12px 14px;
+  border: 2px solid rgba(33, 150, 243, 0.28);
+  border-radius: 14px;
+  background: #fff;
+  color: #15202b;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+#leaderboard-submit-btn {
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 16px;
+  background: #15202b;
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#leaderboard-submit-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+#leaderboard-submitted {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #e8f5e9;
+  text-align: center;
+}
+
+#leaderboard-rank-msg {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 900;
+  color: #2e7d32;
+}
+
+#leaderboard-list {
+  display: grid;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: #f8f9fa;
+}
+
+.leaderboard-row.top-3 {
+  background: linear-gradient(90deg, #fff8e1, #fffde7);
+}
+
+.leaderboard-row.gold-rank {
+  border: 1.5px solid #ffc107;
+  background: linear-gradient(90deg, #fff9c4, #fff59d);
+}
+
+.leaderboard-row.silver-rank {
+  border: 1.5px solid #b0bec5;
+  background: linear-gradient(90deg, #eceff1, #cfd8dc);
+}
+
+.leaderboard-row.bronze-rank {
+  border: 1.5px solid #bf6c3b;
+  background: linear-gradient(90deg, #efebe9, #d7ccc8);
+}
+
+.leaderboard-pos {
+  width: 26px;
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(21, 32, 43, 0.5);
+  text-align: center;
+}
+
+.leaderboard-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-score {
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(21, 32, 43, 0.68);
+}
+
+.leaderboard-loading {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(21, 32, 43, 0.48);
+  padding: 20px;
+}
+
+#leaderboard-close-btn {
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 16px;
+  background: #2196f3;
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#leaderboard-close-btn:active {
+  transform: translateY(1px) scale(0.99);
 }
