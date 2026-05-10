@@ -111,6 +111,8 @@ const impulseBResetLabel = document.querySelector('#impulse-b-reset-label');
 const impulseBShotgunLabel = document.querySelector('#impulse-b-shotgun-label');
 const controlAButton = document.querySelector('#control-a-btn');
 const controlBButton = document.querySelector('#control-b-btn');
+const twistBOffButton = document.querySelector('#twist-b-off-btn');
+const twistBOnButton = document.querySelector('#twist-b-on-btn');
 const shopPanelEl = document.querySelector('#shop-panel');
 const shopCoinsEl = document.querySelector('#shop-coins');
 const shopBulletBtn = document.querySelector('#shop-bullet');
@@ -189,8 +191,7 @@ const defaultLaserRingOnTime = 2;
 const defaultLaserRingOffTime = 2;
 const defaultCoinAttractionRadius = 1.05;
 const goldBlocksPerLevel = 3;
-const ledgesPerLevel = 14;
-const sawBladesPerLevel = 10;
+const sawBladesPerLevel = 3;
 const sawBladeOuterRadius = 1.05;
 const sawBladeInnerRadius = 0.24;
 const sawBladeLaneRadius = pillarRadius + 0.24;
@@ -213,6 +214,8 @@ const goldBlockHitsToBreak = 5;
 const goldCubesPerHit = 2;
 const grayTileHitsToBreak = 3;
 const ledgeRadialLength = gameplayLaneRadius - pillarRadius;
+const floaterDiscGeometry = new THREE.CylinderGeometry(ballRadius * 1.4, ballRadius * 1.4, 0.1, 16);
+const floaterMaterial = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.6, metalness: 0.1 });
 const spikeCycleDuration = 5.4;
 const spikeUpDuration = 2;
 const spikeMoveDuration = 0.2;
@@ -239,6 +242,7 @@ let impulseMode = 'A';
 let impulseBResetSpeed = defaultGravity * 0.1;
 let impulseBShotgunImpulse = 4;
 let controlMode = 'A';
+let twistBMode = false;
 let timeScale = 1;
 let damageSlowdownTimer = 0;
 let grayscaleAmount = 0;
@@ -253,6 +257,7 @@ let hp = maxHp;
 let coins = 0;
 let damageCooldown = 0;
 let acidStompImmunity = 0;
+let acidBurnCooldown = 0;
 let damageFlashTimer = 0;
 let pendingInvulnerability = false;
 let pendingShield = false;
@@ -269,6 +274,9 @@ let isShooting = false;
 let fireCooldown = 0;
 let lastEmptySoundTime = -Infinity;
 let combo = 0;
+let comboSprite = null;
+let comboTexture = null;
+let comboMaterial = null;
 let selectedWeapon = 'machinegun';
 let nextShotId = 1;
 let scaledTime = 0;
@@ -289,10 +297,10 @@ const cannons = [];
 const shockwaves = [];
 const pillarLaserRings = [];
 const bounceCubes = [];
-const ledges = [];
 const pillarSpikes = [];
 const spikeTraps = [];
 const sawBlades = [];
+const floaters = [];
 const acidPuddles = [];
 let nextBounceCubeOrder = 1;
 let spikePlatformsThisLevel = 0;
@@ -343,6 +351,7 @@ const jellyfishTentacleGeometry = new THREE.CylinderGeometry(0.018, 0.012, 0.38,
 const pufferBodyGeometry = new THREE.SphereGeometry(0.25, 18, 12);
 const porcupineBodyGeometry = new THREE.SphereGeometry(0.25, 16, 12);
 const acidPuddleGeometry = new THREE.CircleGeometry(0.22, 20);
+const acidDropletGeometry = new THREE.SphereGeometry(0.1, 10, 8);
 const acidSnailBodyGeometry = new THREE.SphereGeometry(0.22, 14, 10);
 const acidSnailShellGeometry = new THREE.SphereGeometry(0.28, 16, 12);
 const groundEnemyFootOffset = 0.2;
@@ -699,6 +708,56 @@ function playPufferExplosionSound() {
   }
 }
 
+function playMetallicBlipSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1800, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.12);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+function playAcidBurnSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const hiss = ctx.createOscillator();
+    const hissGain = ctx.createGain();
+    hiss.type = 'sawtooth';
+    hiss.frequency.setValueAtTime(2200, now);
+    hiss.frequency.exponentialRampToValueAtTime(800, now + 0.2);
+    hissGain.gain.setValueAtTime(0.18, now);
+    hissGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    hiss.connect(hissGain);
+    hissGain.connect(ctx.destination);
+    hiss.start(now);
+    hiss.stop(now + 0.25);
+    const pop = ctx.createOscillator();
+    const popGain = ctx.createGain();
+    pop.type = 'sine';
+    pop.frequency.setValueAtTime(300, now + 0.05);
+    pop.frequency.exponentialRampToValueAtTime(120, now + 0.15);
+    popGain.gain.setValueAtTime(0.14, now + 0.05);
+    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    pop.connect(popGain);
+    popGain.connect(ctx.destination);
+    pop.start(now + 0.05);
+    pop.stop(now + 0.2);
+  } catch (_) {
+    /* silent */
+  }
+}
+
 function startInvulnerabilityMusic() {
   try {
     if (invulnerabilityAudio) return;
@@ -1031,7 +1090,7 @@ function createCrate(platformGroup, angle, radius) {
   );
   mesh.rotation.y = angle;
   platformGroup.add(mesh);
-  crates.push({ mesh, platformGroup, value: 5, broken: false });
+  crates.push({ mesh, platformGroup, value: 5, broken: false, falling: false, fallVelocity: 0 });
 }
 
 function createGoldBlock(platformData, tile) {
@@ -1048,7 +1107,7 @@ function createGoldBlock(platformData, tile) {
   mesh.rotation.y = angle + Math.PI * 0.25;
   mesh.castShadow = true;
   platformData.group.add(mesh);
-  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, sparkleTimer: Math.random() * 0.12, broken: false });
+  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, sparkleTimer: Math.random() * 0.12, broken: false, falling: false, fallVelocity: 0 });
   return true;
 }
 
@@ -1107,21 +1166,6 @@ function spawnGoldBlocksForLevel() {
   }
 }
 
-function createPillarLedge(y, angle) {
-  const group = new THREE.Group();
-  const centerRadius = pillarRadius + ledgeRadialLength / 2;
-  group.position.set(Math.cos(angle) * centerRadius, y, Math.sin(angle) * centerRadius);
-  group.rotation.y = -angle;
-
-  const mesh = new THREE.Mesh(ledgeGeometry.clone(), ledgeMaterial.clone());
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  group.add(mesh);
-  world.add(group);
-
-  ledges.push({ group, mesh, broken: false, colliderPosition: new THREE.Vector3() });
-}
-
 function createPillarSpike(y, angle) {
   const group = new THREE.Group();
   group.position.set(Math.cos(angle) * pillarRadius, y, Math.sin(angle) * pillarRadius);
@@ -1142,7 +1186,7 @@ function spawnPillarSpikesForLevel() {
   const intervalCount = Math.max(1, target - 1);
   const usedIntervals = new Set();
 
-  while (usedIntervals.size < Math.min(ledgesPerLevel, intervalCount)) {
+  while (usedIntervals.size < Math.min(4, intervalCount)) {
     usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
   }
 
@@ -1153,28 +1197,31 @@ function spawnPillarSpikesForLevel() {
   }
 }
 
-function spawnPillarLedgesForLevel() {
+function createFloater(y, angle) {
+  const mesh = new THREE.Mesh(floaterDiscGeometry, floaterMaterial.clone());
+  mesh.position.set(
+    Math.cos(angle) * gameplayLaneRadius,
+    y,
+    Math.sin(angle) * gameplayLaneRadius
+  );
+  mesh.castShadow = true;
+  world.add(mesh);
+  floaters.push({ mesh, angle, y, used: false });
+}
+
+function spawnFloatersForLevel() {
   const target = getLevelTarget();
   const intervalCount = Math.max(1, target - 1);
   const usedIntervals = new Set();
-  const targetLedges = Math.min(ledgesPerLevel, Math.ceil(intervalCount / 2));
-  let attempts = 0;
 
-  while (usedIntervals.size < targetLedges && attempts < intervalCount * 8) {
-    attempts += 1;
-    const interval = 1 + Math.floor(Math.random() * intervalCount);
-    if (usedIntervals.has(interval - 1) || usedIntervals.has(interval + 1)) continue;
-    usedIntervals.add(interval);
-  }
-
-  while (usedIntervals.size < Math.min(ledgesPerLevel, intervalCount)) {
+  while (usedIntervals.size < Math.min(24, intervalCount)) {
     usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
   }
 
   for (const interval of usedIntervals) {
     const y = -(interval + 0.35 + Math.random() * 0.3) * platformSpacing;
     const angle = Math.random() * twoPi;
-    createPillarLedge(y, angle);
+    createFloater(y, angle);
   }
 }
 
@@ -1395,7 +1442,52 @@ function spawnAcidPuddle(platformData, angle, radius, isDeath) {
     isDeath,
     baseSize: size,
     colliderPosition: new THREE.Vector3(),
+    falling: false,
+    fallVelocity: 0,
+    isDroplet: false,
   });
+}
+
+function updateFloaters(dt) {
+  if (ballVelocity >= 0) return;
+
+  const bottomY = ball.position.y - ballRadius;
+  const previousBottomY = bottomY - ballVelocity * dt;
+
+  for (let i = floaters.length - 1; i >= 0; i -= 1) {
+    const floater = floaters[i];
+    if (floater.used) continue;
+
+    const worldPos = floater.mesh.getWorldPosition(_floaterWorldPos);
+    const fY = worldPos.y;
+    const floaterTop = fY + 0.05;
+
+    if (previousBottomY > floaterTop && bottomY <= floaterTop) {
+      const dx = ball.position.x - worldPos.x;
+      const dz = ball.position.z - worldPos.z;
+      const radialDist = Math.hypot(dx, dz);
+      if (radialDist <= ballRadius) {
+        floater.used = true;
+        spawnExplosion(worldPos.clone(), 0x9e9e9e, 8);
+        world.remove(floater.mesh);
+        floater.mesh.geometry.dispose();
+        floaters.splice(i, 1);
+        ballVelocity = Math.max(ballVelocity, stompImpulse);
+        if (reloadAmmo()) {
+          spawnFloatingText('Reload', ball.position);
+          playReloadSound();
+        }
+        playBounceSound();
+        continue;
+      }
+    }
+
+    if (worldPos.y > ball.position.y + 15) {
+      world.remove(floater.mesh);
+      floater.mesh.geometry.dispose();
+      floaters.splice(i, 1);
+    }
+  }
 }
 
 function updateAcidPuddles(dt) {
@@ -1404,6 +1496,91 @@ function updateAcidPuddles(dt) {
 
   for (let i = acidPuddles.length - 1; i >= 0; i -= 1) {
     const puddle = acidPuddles[i];
+
+    if (!puddle.falling) {
+      if (!puddle.emitTimer) puddle.emitTimer = 0;
+      puddle.emitTimer += dt;
+      if (puddle.emitTimer >= 0.05) {
+        puddle.emitTimer = 0;
+        const worldPos = new THREE.Vector3();
+        puddle.mesh.getWorldPosition(worldPos);
+        for (let j = 0; j < 2; j += 1) {
+          const material = new THREE.MeshBasicMaterial({ color: colors.acid, transparent: true, opacity: 1 });
+          const mesh = new THREE.Mesh(particleGeometry, material);
+          mesh.position.set(
+            worldPos.x + (Math.random() - 0.5) * 0.15,
+            worldPos.y + 0.01,
+            worldPos.z + (Math.random() - 0.5) * 0.15
+          );
+          scene.add(mesh);
+          particles.push({
+            mesh,
+            material,
+            velocity: new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3),
+            life: 0.4 + Math.random() * 0.3,
+          });
+        }
+      }
+    }
+
+    if (puddle.falling) {
+      const previousY = puddle.mesh.position.y;
+      puddle.fallVelocity -= 14 * dt;
+      puddle.mesh.position.y += puddle.fallVelocity * dt;
+
+      const dropletRadiusSq = 0.1 * 0.1;
+      for (let e = enemies.length - 1; e >= 0; e -= 1) {
+        const enemy = enemies[e];
+        const enemyPos = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+        const dx = puddle.mesh.position.x - enemyPos.x;
+        const dy = puddle.mesh.position.y - enemyPos.y;
+        const dz = puddle.mesh.position.z - enemyPos.z;
+        if (dx * dx + dy * dy + dz * dz <= dropletRadiusSq + enemy.collisionRadius * enemy.collisionRadius) {
+          if (enemy.type === 'bat' || enemy.type === 'jellyfish') {
+            removeEnemyAt(e, colors.acid);
+          } else if (enemy.type !== 'acidSnail') {
+            damageEnemy(e);
+          }
+        }
+      }
+
+      const currentY = puddle.mesh.position.y;
+      for (const platform of platforms) {
+        const platformTop = platformY(platform) + platformThickness / 2;
+        if (previousY >= platformTop && currentY <= platformTop && puddle.fallVelocity < 0) {
+          const localPos = new THREE.Vector3(puddle.mesh.position.x, platformTop, puddle.mesh.position.z);
+          platform.group.worldToLocal(localPos);
+          const r = Math.hypot(localPos.x, localPos.z);
+          const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
+          const tile = platform.tiles.find(t => !t.broken && angleInArc(a, t.start, t.end));
+          if (tile && r >= platformInnerRadius && r <= platformOuterRadius) {
+            puddle.mesh.removeFromParent();
+            puddle.mesh.geometry.dispose();
+            const size = puddle.isDeath ? 0.44 : 0.22;
+            const geometry = new THREE.CircleGeometry(size, 20);
+            const material = acidPuddleMaterial.clone();
+            material.opacity = 0.85;
+            const newMesh = new THREE.Mesh(geometry, material);
+            newMesh.rotation.x = -Math.PI / 2;
+            newMesh.position.set(localPos.x, platformThickness / 2 + 0.005, localPos.z);
+            platform.group.add(newMesh);
+            puddle.mesh = newMesh;
+            puddle.material = material;
+            puddle.platformData = platform;
+            puddle.angle = a;
+            puddle.radius = r;
+            puddle.age = 0;
+            puddle.falling = false;
+            puddle.fallVelocity = 0;
+            puddle.isDroplet = false;
+            puddle.baseSize = size;
+            break;
+          }
+        }
+      }
+      continue;
+    }
+
     puddle.age += dt;
     const totalLife = puddle.fullLife + puddle.shrinkLife;
 
@@ -1429,8 +1606,34 @@ function updateAcidPuddles(dt) {
     );
     puddle.platformData.group.localToWorld(puddle.colliderPosition);
 
-    if (acidStompImmunity <= 0 && ball.position.distanceToSquared(puddle.colliderPosition) <= damageRadiusSq) {
+    if (acidStompImmunity <= 0 && acidBurnCooldown <= 0 && ball.position.distanceToSquared(puddle.colliderPosition) <= damageRadiusSq) {
       applyDamage();
+      playAcidBurnSound();
+      acidBurnCooldown = 0.5;
+    }
+  }
+}
+
+function detachAcidPuddlesFromTile(platform, tile) {
+  for (const puddle of acidPuddles) {
+    if (puddle.falling || puddle.platformData !== platform) continue;
+    const angle = (puddle.angle + twoPi) % twoPi;
+    if (angleInArc(angle, tile.start, tile.end)) {
+      const worldPos = new THREE.Vector3();
+      puddle.mesh.getWorldPosition(worldPos);
+      puddle.mesh.removeFromParent();
+      puddle.mesh.geometry.dispose();
+      const dropletMaterial = acidPuddleMaterial.clone();
+      dropletMaterial.opacity = 0.9;
+      const dropletMesh = new THREE.Mesh(acidDropletGeometry, dropletMaterial);
+      dropletMesh.position.copy(worldPos);
+      scene.add(dropletMesh);
+      puddle.mesh = dropletMesh;
+      puddle.material = dropletMaterial;
+      puddle.falling = true;
+      puddle.fallVelocity = 0;
+      puddle.isDroplet = true;
+      puddle.platformData = null;
     }
   }
 }
@@ -1601,7 +1804,12 @@ function createBat(y, id) {
     flapOffset: Math.random() * twoPi,
   };
   positionEnemy(enemy);
-  scene.add(enemy.group);
+  if (twistBMode) {
+    enemy.angle -= world.rotation.y;
+    world.add(enemy.group);
+  } else {
+    scene.add(enemy.group);
+  }
   enemies.push(enemy);
 }
 
@@ -1627,7 +1835,12 @@ function createSpikedBall(y, id) {
     flashTimer: 0,
   };
   positionEnemy(enemy);
-  scene.add(enemy.group);
+  if (twistBMode) {
+    enemy.angle -= world.rotation.y;
+    world.add(enemy.group);
+  } else {
+    scene.add(enemy.group);
+  }
   enemies.push(enemy);
 }
 
@@ -1780,7 +1993,13 @@ function createFloatingEnemyWithOptions(type, y, id, options = {}) {
   };
   if (options.small) enemy.group.scale.setScalar(0.62);
   positionEnemy(enemy);
-  scene.add(enemy.group);
+  if (twistBMode && !options.small) {
+    enemy.angle -= world.rotation.y;
+    enemy.arcCenter -= world.rotation.y;
+    world.add(enemy.group);
+  } else {
+    scene.add(enemy.group);
+  }
   enemies.push(enemy);
 }
 
@@ -1901,7 +2120,16 @@ function spawnPillarLaserRingsForLevel() {
   const count = Math.min(5, Math.max(1, Math.floor(currentLevel / 2)));
   const used = new Set();
   while (used.size < count) used.add(2 + Math.floor(Math.random() * Math.max(1, target - 3)));
-  for (const interval of used) createPillarLaserRing(-(interval + 0.5) * platformSpacing);
+  for (const interval of used) {
+    const y = -(interval + 0.5) * platformSpacing;
+    createPillarLaserRing(y);
+    const floaterY = y + goldBlockSize;
+    const angleStep = Math.PI / 7.2;
+    for (let j = 0; j < 3; j++) {
+      const angle = j * angleStep;
+      createFloater(floaterY, angle);
+    }
+  }
 }
 
 function maybeSpawnWorms(platformData, id) {
@@ -2014,9 +2242,47 @@ function reloadAmmo() {
   return true;
 }
 
+function updateComboSprite() {
+  if (combo <= 0) {
+    if (comboSprite) {
+      comboSprite.removeFromParent();
+      comboTexture.dispose();
+      comboMaterial.dispose();
+      comboSprite = null;
+      comboTexture = null;
+      comboMaterial = null;
+    }
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.font = '900 64px Inter, Arial, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.lineWidth = 8;
+  context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+  context.strokeText(String(combo), canvas.width / 2, canvas.height / 2);
+  context.fillStyle = '#ffc107';
+  context.fillText(String(combo), canvas.width / 2, canvas.height / 2);
+  if (comboTexture) comboTexture.dispose();
+  if (comboMaterial) comboMaterial.dispose();
+  if (comboSprite) comboSprite.removeFromParent();
+  comboTexture = new THREE.CanvasTexture(canvas);
+  comboMaterial = new THREE.SpriteMaterial({ map: comboTexture, transparent: true, depthTest: false });
+  comboSprite = new THREE.Sprite(comboMaterial);
+  comboSprite.position.copy(ball.position);
+  comboSprite.position.y += ballRadius + 0.28;
+  comboSprite.scale.set(1.35, 0.68, 1);
+  comboSprite.renderOrder = 20;
+  scene.add(comboSprite);
+}
+
 function increaseCombo() {
   combo += 1;
-  spawnFloatingText(String(combo), ball.position, 0xffc107, true);
+  updateComboSprite();
   if (comboShieldUnlocked && combo >= comboShieldThreshold && !comboShieldAwardedThisCombo) {
     comboShieldAwardedThisCombo = true;
     if (!hasShield) {
@@ -2031,6 +2297,8 @@ function resetCombo(showLoss = true) {
   if (combo <= 0) return;
   combo = 0;
   comboShieldAwardedThisCombo = false;
+  updateComboSprite();
+  updateComboSprite();
   if (showLoss) {
     spawnFloatingText('Combo Loss', ball.position, 0xff7043, true);
   }
@@ -2691,6 +2959,35 @@ function detachBounceCubesFromTile(platform, tile) {
   }
 }
 
+function detachCratesAndGoldFromTile(platform, tile) {
+  for (const crate of crates) {
+    if (crate.broken || crate.platformGroup !== platform.group) continue;
+    const localPos = new THREE.Vector3();
+    crate.mesh.getWorldPosition(localPos);
+    const r = Math.hypot(localPos.x, localPos.z);
+    const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
+    if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
+    crate.platformGroup.remove(crate.mesh);
+    scene.add(crate.mesh);
+    crate.platformGroup = null;
+    crate.falling = true;
+    crate.fallVelocity = 0;
+  }
+  for (const gb of goldBlocks) {
+    if (gb.broken || gb.platformData !== platform) continue;
+    const localPos = new THREE.Vector3();
+    gb.mesh.getWorldPosition(localPos);
+    const r = Math.hypot(localPos.x, localPos.z);
+    const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
+    if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
+    gb.platformData.group.remove(gb.mesh);
+    scene.add(gb.mesh);
+    gb.platformData = null;
+    gb.falling = true;
+    gb.fallVelocity = 0;
+  }
+}
+
 function breakCrate(crateIndex, byBullet = false) {
   const crate = crates[crateIndex];
   if (!crate || crate.broken) return false;
@@ -2797,6 +3094,8 @@ function breakGrayTile(platform, tile) {
 
   detachBounceCubesFromTile(platform, tile);
   detachGroundEnemiesFromTile(platform, tile);
+  detachAcidPuddlesFromTile(platform, tile);
+  detachCratesAndGoldFromTile(platform, tile);
   tile.broken = true;
   disposeTile(tile);
   playGlassBreakSound();
@@ -2830,6 +3129,8 @@ function breakCrackedTile(platform, tile) {
 
   detachBounceCubesFromTile(platform, tile);
   detachGroundEnemiesFromTile(platform, tile);
+  detachAcidPuddlesFromTile(platform, tile);
+  detachCratesAndGoldFromTile(platform, tile);
   tile.broken = true;
   disposeTile(tile);
   playGlassBreakSound();
@@ -2854,7 +3155,7 @@ function removeEnemyAt(index, explosionColor) {
 
 function killEnemyAt(index, explosionColor) {
   const enemy = enemies[index];
-  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle') playBatDeathSound();
+  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine') playBatDeathSound();
   score += 5 * Math.max(1, combo);
   scoreEl.textContent = String(score);
   removeEnemyAt(index, explosionColor);
@@ -3064,6 +3365,12 @@ function checkBulletEnemyHit(bullet) {
       if (bullet.hitEnemies) bullet.hitEnemies.add(enemy);
       if (enemy.type === 'acidSnail') {
         spawnBulletImpact(bullet.mesh.position.clone());
+        enemy.flashTimer = 0.2;
+        enemy.bodyMaterial.emissive.setHex(0x2196f3);
+        enemy.bodyMaterial.emissiveIntensity = 0.9;
+        enemy.shellMaterial.emissive.setHex(0x2196f3);
+        enemy.shellMaterial.emissiveIntensity = 0.9;
+        playMetallicBlipSound();
         return true;
       }
       damageEnemy(i);
@@ -3166,6 +3473,43 @@ function updateGoldBlocks(dt) {
       goldBlock.mesh.material.color.setHex(colors.gold);
       goldBlock.mesh.material.emissive.setHex(0x8a5a00);
       goldBlock.mesh.material.emissiveIntensity = 0.25;
+    }
+  }
+}
+
+function updateFallingCratesAndGold(dt) {
+  for (const crate of crates) {
+    if (!crate.falling || crate.broken) continue;
+    const previousY = crate.mesh.position.y;
+    crate.fallVelocity = (crate.fallVelocity ?? 0) - 14 * dt;
+    crate.mesh.position.y += crate.fallVelocity * dt;
+    for (const platform of platforms) {
+      const platformTop = platformY(platform) + platformThickness / 2 + 0.22;
+      if (previousY >= platformTop && crate.mesh.position.y <= platformTop) {
+        crate.platformGroup = platform.group;
+        platform.group.add(crate.mesh);
+        crate.mesh.position.y = platformThickness / 2 + 0.22;
+        crate.falling = false;
+        crate.fallVelocity = 0;
+        break;
+      }
+    }
+  }
+  for (const gb of goldBlocks) {
+    if (!gb.falling || gb.broken) continue;
+    const previousY = gb.mesh.position.y;
+    gb.fallVelocity = (gb.fallVelocity ?? 0) - 14 * dt;
+    gb.mesh.position.y += gb.fallVelocity * dt;
+    for (const platform of platforms) {
+      const platformTop = platformY(platform) + platformThickness / 2 + goldBlockHalfSize;
+      if (previousY >= platformTop && gb.mesh.position.y <= platformTop) {
+        gb.platformData = platform;
+        platform.group.add(gb.mesh);
+        gb.mesh.position.y = platformThickness / 2 + goldBlockHalfSize;
+        gb.falling = false;
+        gb.fallVelocity = 0;
+        break;
+      }
     }
   }
 }
@@ -3329,87 +3673,6 @@ function updateCannons(dt) {
       cannon.laser.visible = true;
       playCannonFireSound();
     }
-  }
-}
-
-function destroyLedge(index) {
-  const ledge = ledges[index];
-  if (!ledge || ledge.broken) return;
-
-  const position = new THREE.Vector3();
-  ledge.group.getWorldPosition(position);
-  ledge.broken = true;
-  spawnExplosion(position, 0x78909c, 16);
-  if (ledge.group.parent) ledge.group.parent.remove(ledge.group);
-  ledge.group.traverse((child) => {
-    if (child.geometry) child.geometry.dispose();
-    if (child.material) child.material.dispose();
-  });
-  ledges.splice(index, 1);
-}
-
-function updateLedges(previousY) {
-  if (ballVelocity >= 0) return;
-
-  const bottomNow = ball.position.y - ballRadius;
-  const ledgeHalfLength = ledgeRadialLength / 2 + 0.12;
-  const ledgeHalfWidth = 0.46;
-  const stompMargin = ballRadius + 0.18;
-  const ledgeTopLocalY = 0.09;
-  let bestIndex = -1;
-  let bestTop = -Infinity;
-
-  for (let i = ledges.length - 1; i >= 0; i -= 1) {
-    const ledge = ledges[i];
-    if (ledge.broken) continue;
-
-    const ledgeTop = ledge.group.position.y + 0.09;
-    if (bottomNow > ledgeTop + stompMargin) {
-      if (ledge.group.position.y > ball.position.y + 15) destroyLedge(i);
-      continue;
-    }
-
-    _ledgePreviousBottom.set(ball.position.x, previousY, ball.position.z);
-    _ledgeCurrentBottom.copy(ball.position);
-    ledge.group.worldToLocal(_ledgePreviousBottom);
-    ledge.group.worldToLocal(_ledgeCurrentBottom);
-
-    const previousSphereBottom = _ledgePreviousBottom.y - ballRadius;
-    const currentSphereBottom = _ledgeCurrentBottom.y - ballRadius;
-    if (previousSphereBottom < ledgeTopLocalY - stompMargin || currentSphereBottom > ledgeTopLocalY + stompMargin) continue;
-
-    const crossedTop = previousSphereBottom >= ledgeTopLocalY && currentSphereBottom <= ledgeTopLocalY + stompMargin;
-    if (previousSphereBottom !== currentSphereBottom) {
-      const t = (previousSphereBottom - ledgeTopLocalY) / Math.max(0.0001, previousSphereBottom - currentSphereBottom);
-      _ledgeStompPoint.lerpVectors(_ledgePreviousBottom, _ledgeCurrentBottom, THREE.MathUtils.clamp(t, 0, 1));
-    } else {
-      _ledgeStompPoint.copy(_ledgeCurrentBottom);
-    }
-
-    const closestX = THREE.MathUtils.clamp(_ledgeStompPoint.x, -ledgeHalfLength, ledgeHalfLength);
-    const closestZ = THREE.MathUtils.clamp(_ledgeStompPoint.z, -ledgeHalfWidth, ledgeHalfWidth);
-    const dx = _ledgeStompPoint.x - closestX;
-    const dz = _ledgeStompPoint.z - closestZ;
-    if (
-      (crossedTop || Math.abs(currentSphereBottom - ledgeTopLocalY) <= stompMargin) &&
-      dx * dx + dz * dz <= stompMargin * stompMargin
-    ) {
-      if (ledgeTop > bestTop) {
-        bestTop = ledgeTop;
-        bestIndex = i;
-      }
-    }
-  }
-
-  if (bestIndex >= 0) {
-    destroyLedge(bestIndex);
-    if (reloadAmmo()) {
-      spawnFloatingText('Reload', ball.position);
-      playReloadSound();
-    }
-    playBounceSound();
-    ball.position.y = bestTop + ballRadius;
-    ballVelocity = Math.max(ballVelocity, stompImpulse);
   }
 }
 
@@ -3799,8 +4062,12 @@ function clearTower() {
   crates.length = 0;
   goldBlocks.length = 0;
   cannons.length = 0;
-  ledges.length = 0;
-  spikeTraps.length = 0;
+spikeTraps.length = 0;
+  while (floaters.length) {
+    const f = floaters.pop();
+    world.remove(f.mesh);
+    f.mesh.geometry.dispose();
+  }
   while (pillarLaserRings.length) {
     const ring = pillarLaserRings.pop();
     ring.mesh.removeFromParent();
@@ -3876,9 +4143,9 @@ function startLevel() {
     createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
     nextPlatformId += 1;
   }
-  spawnGoldBlocksForLevel();
-  spawnPillarLedgesForLevel();
+spawnGoldBlocksForLevel();
   spawnPillarSpikesForLevel();
+  spawnFloatersForLevel();
   spawnSawBladesForLevel();
   spawnPillarLaserRingsForLevel();
 }
@@ -3911,6 +4178,7 @@ function endGame() {
   isGameOver = true;
   stopShooting();
   stopInvulnerabilityMusic();
+  updateComboSprite();
   finalScoreEl.textContent = String(score);
   gameOverEl.hidden = false;
   scoreSubmittedToLeaderboard = false;
@@ -4010,6 +4278,7 @@ function applyDamage() {
 function updatePowerups(dt) {
   if (damageCooldown > 0) damageCooldown = Math.max(0, damageCooldown - dt);
   if (acidStompImmunity > 0) acidStompImmunity = Math.max(0, acidStompImmunity - dt);
+  if (acidBurnCooldown > 0) acidBurnCooldown = Math.max(0, acidBurnCooldown - dt);
   if (damageFlashTimer > 0) damageFlashTimer = Math.max(0, damageFlashTimer - dt);
 
   if (hasShield) {
@@ -4202,6 +4471,7 @@ const _ballLeftCollider = new THREE.Vector3();
 const _ballRightCollider = new THREE.Vector3();
 const _enemyLocalPosition = new THREE.Vector3();
 const _enemyFallLocalPosition = new THREE.Vector3();
+const _floaterWorldPos = new THREE.Vector3();
 const _enemySegmentWorldPosition = new THREE.Vector3();
 const _platformUndersidePoint = new THREE.Vector3();
 const _enemyProjectedPosition = new THREE.Vector3();
@@ -4429,10 +4699,6 @@ function handlePlatformCollision(previousY) {
 }
 
 function recyclePlatforms() {
-  for (let i = ledges.length - 1; i >= 0; i -= 1) {
-    if (ledges[i].group.position.y > ball.position.y + 15) destroyLedge(i);
-  }
-
   for (let i = platforms.length - 1; i >= 0; i -= 1) {
     const platform = platforms[i];
     const y = platformY(platform);
@@ -4484,12 +4750,16 @@ function updateCamera(dt) {
     shakeOffset.set(
       (Math.random() - 0.5) * shakeIntensity,
       (Math.random() - 0.5) * shakeIntensity,
-      (Math.random() - 0.5) * shakeIntensity * 0.4
+      0
     );
     camera.position.copy(cameraBasePos).add(shakeOffset);
+    camera.position.z = 10.5;
+    camera.position.x = 0;
     shakeIntensity *= Math.exp(-shakeDecay * dt);
   } else {
     shakeIntensity = 0;
+    camera.position.z = 10.5;
+    camera.position.x = 0;
   }
 }
 
@@ -5193,6 +5463,18 @@ controlBButton.addEventListener('click', () => {
   stopShooting();
 });
 
+twistBOffButton.addEventListener('click', () => {
+  twistBMode = false;
+  twistBOffButton.classList.add('active');
+  twistBOnButton.classList.remove('active');
+});
+
+twistBOnButton.addEventListener('click', () => {
+  twistBMode = true;
+  twistBOnButton.classList.add('active');
+  twistBOffButton.classList.remove('active');
+});
+
 shopBulletBtn.addEventListener('click', buyShopBullet);
 shopHpBtn.addEventListener('click', buyShopHp);
 shopArmorBtn.addEventListener('click', buyShopArmor);
@@ -5426,7 +5708,6 @@ function animate(_time, frame) {
     scene.updateMatrixWorld(true);
     checkBallCrateHit(previousY);
     checkBallGoldBlockStomp(previousY);
-    updateLedges(previousY);
     handlePlatformUndersideCollision(previousY);
     handlePlatformCollision(previousY);
     updateSpikeTraps(dt);
@@ -5435,15 +5716,21 @@ function animate(_time, frame) {
     updatePillarLaserRings(dt);
     updateBullets(dt);
     updateEnemies(dt);
+    updateFloaters(dt);
     updateAcidPuddles(dt);
     updateShockwaves(dt);
     updateCannons(dt);
     updateGoldBlocks(dt);
+    updateFallingCratesAndGold(dt);
     updateCoinPickups(dt);
     updateParticles(dt);
     updateBounceCubes(dt);
     recyclePlatforms();
     updateFloatingTexts(dt);
+    if (comboSprite) {
+      comboSprite.position.copy(ball.position);
+      comboSprite.position.y += ballRadius + 0.28;
+    }
     updateTileFlashes(dt);
     updateCamera(dt);
   }

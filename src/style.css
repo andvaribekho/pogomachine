@@ -259,6 +259,11 @@ body.ar-active #ar-mode-button {
 }
 
 @media (max-width: 560px) {
+  #version-label {
+    left: 12px;
+    bottom: 58px;
+  }
+
   #ammo-ui {
     left: 10px;
   }
@@ -682,6 +687,30 @@ body.ar-active #ar-mode-button {
   .reward-grid,
   .shop-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+#version-label {
+  position: fixed;
+  left: 18px;
+  bottom: 68px;
+  z-index: 2;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 20px rgba(21, 32, 43, 0.1);
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(21, 32, 43, 0.58);
+  pointer-events: none;
+}
+
+@media (max-width: 560px) {
+  #version-label {
+    left: 12px;
+    bottom: 58px;
+    font-size: 11px;
+    padding: 5px 8px;
   }
 }
 
