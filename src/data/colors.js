@@ -20,6 +20,8 @@ export const colors = {
   blueParticle: 0x64b5f6,
   crate: 0x9c6b30,
   worm: 0x8bc34a,
+  yellowWorm: 0xffeb3b,
+  yellowWormHead: 0xfbc02d,
   shop: 0xffc107,
   acid: 0x76ff03,
 };
