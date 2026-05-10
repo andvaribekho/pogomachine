@@ -1,5 +1,39 @@
 import * as THREE from 'three';
 import './style.css';
+import { colors } from './data/colors.js';
+import {
+  platformInnerRadius, platformOuterRadius, platformThickness, platformSpacing,
+  ballRadius, pillarRadius, twoPi, collisionDebugEnabled,
+  defaultMaxAmmo, defaultFireInterval, defaultShotgunFireInterval,
+  defaultShotgunSpreadAngle, defaultBulletImpulse, defaultGravity,
+  defaultTerminalVelocity, defaultStompImpulse, defaultPlayerHitboxScale,
+  defaultCannonChargeTime, defaultCannonCooldown, defaultLaserRingOnTime,
+  defaultLaserRingOffTime, defaultCoinAttractionRadius, bulletSpeed,
+  bulletLifetime, baseShotUpwardVelocityCap, bounceCubePoolSize,
+  gameplayLaneRadius, goldBlockSize, goldBlockHalfSize, goldBlockCollisionRadius,
+  goldBlockHitsToBreak, goldCubesPerHit, grayTileHitsToBreak, ledgeRadialLength,
+  sawBladeOuterRadius, sawBladeInnerRadius, sawBladeLaneRadius,
+  spikeCycleDuration, spikeUpDuration, spikeMoveDuration, spikeDownDuration,
+  platformSpikeHeight, ballStartY, groundEnemyFootOffset, idleRotationSpeed,
+} from './core/constants.js';
+import {
+  goldBlocksPerLevel, sawBladesPerLevel, maxHp,
+  invulnerabilityCost, shieldCost, piercingCost, vampiricCost,
+  comboShieldCost, comboShieldThreshold,
+} from './data/balance.js';
+import {
+  makeArcGeometry, angleInArc, isBlueTile, isFlashablePlatformTile,
+} from './core/utils.js';
+import {
+  playBounceSound, playFailSound, playShootSound, playEmptyAmmoSound,
+  playReloadSound, playBatDeathSound, playCannonActivateSound,
+  playCannonFireSound, playRewardSound, playCoinCubeCollectSound,
+  playGlassBreakSound, playPufferExplosionSound, playMetallicBlipSound,
+  playAcidBurnSound, startInvulnerabilityMusic, updateInvulnerabilityMusic,
+  stopInvulnerabilityMusic,
+} from './systems/audio.js';
+import { updateHeartsUI, updateCoinsUI } from './systems/ui.js';
+import { setupInputListeners } from './systems/input.js';
 
 const JSONBIN_BIN_ID = '69fd1176adc21f119a6b5071';
 const JSONBIN_ACCESS_KEY = '$2a$10$rijn8M9JPA3wdQtJMc2IW.I3kZD/s1BYr1SePS8O9lrB2x78LhL92';
@@ -105,10 +139,13 @@ const extraPanelEl = document.querySelector('#extra-panel');
 const closeExtraButton = document.querySelector('#close-extra-button');
 const impulseAButton = document.querySelector('#impulse-a-btn');
 const impulseBButton = document.querySelector('#impulse-b-btn');
+const impulseCButton = document.querySelector('#impulse-c-btn');
 const impulseBResetInput = document.querySelector('#impulse-b-reset-input');
 const impulseBShotgunInput = document.querySelector('#impulse-b-shotgun-input');
 const impulseBResetLabel = document.querySelector('#impulse-b-reset-label');
 const impulseBShotgunLabel = document.querySelector('#impulse-b-shotgun-label');
+const impulseCFactorLabel = document.querySelector('#impulse-c-factor-label');
+const impulseCFactorInput = document.querySelector('#impulse-c-factor-input');
 const controlAButton = document.querySelector('#control-a-btn');
 const controlBButton = document.querySelector('#control-b-btn');
 const twistBOffButton = document.querySelector('#twist-b-off-btn');
@@ -142,87 +179,9 @@ let gameOverScreenShown = false;
 const world = new THREE.Group();
 scene.add(world);
 
-const colors = {
-  blue: 0x2196f3,
-  blueFlash: 0x90caf9,
-  crack: 0x0d47a1,
-  gray: 0x8a949e,
-  grayFlash: 0xcfd8dc,
-  grayCrack: 0x37474f,
-  grayParticle: 0x9ea7ad,
-  finish: 0x2ecc71,
-  red: 0xf44336,
-  pillar: 0x243447,
-  ball: 0xffd54f,
-  bullet: 0xfff176,
-  gold: 0xffc107,
-  goldFlash: 0xffffff,
-  bat: 0x263238,
-  batWing: 0x455a64,
-  spike: 0x6d4c41,
-  particle: 0xffe082,
-  blueParticle: 0x64b5f6,
-  crate: 0x9c6b30,
-  worm: 0x8bc34a,
-  shop: 0xffc107,
-  acid: 0x76ff03,
-};
-
-const platformInnerRadius = 0.95;
-const platformOuterRadius = 3.15;
-const platformThickness = 0.22;
-const platformSpacing = 6.45;
-const ballRadius = 0.32;
-const pillarRadius = 1.0125;
-const twoPi = Math.PI * 2;
-const collisionDebugEnabled = new URLSearchParams(window.location.search).has('debug');
-const defaultMaxAmmo = 5;
-const defaultFireInterval = 0.3;
-const defaultShotgunFireInterval = 0.7;
-const defaultShotgunSpreadAngle = 5;
-const defaultBulletImpulse = 4.3;
-const defaultGravity = -14;
-const defaultTerminalVelocity = 28;
-const defaultStompImpulse = 5.4;
-const defaultPlayerHitboxScale = 0.3;
-const defaultCannonChargeTime = 3;
-const defaultCannonCooldown = 5;
-const defaultLaserRingOnTime = 2;
-const defaultLaserRingOffTime = 2;
-const defaultCoinAttractionRadius = 1.05;
-const goldBlocksPerLevel = 3;
-const sawBladesPerLevel = 3;
-const sawBladeOuterRadius = 1.05;
-const sawBladeInnerRadius = 0.24;
-const sawBladeLaneRadius = pillarRadius + 0.24;
-const maxHp = 5;
-const invulnerabilityCost = 20;
-const shieldCost = 20;
-const piercingCost = 25;
-const vampiricCost = 30;
-const comboShieldCost = 25;
-const comboShieldThreshold = 5;
-const bulletSpeed = 22;
-const bulletLifetime = 1.05;
-const baseShotUpwardVelocityCap = 2.4;
-const bounceCubePoolSize = 100;
-const gameplayLaneRadius = platformOuterRadius - 0.8;
-const goldBlockSize = 0.644;
-const goldBlockHalfSize = goldBlockSize / 2;
-const goldBlockCollisionRadius = goldBlockHalfSize + ballRadius + 0.08;
-const goldBlockHitsToBreak = 5;
-const goldCubesPerHit = 2;
-const grayTileHitsToBreak = 3;
-const ledgeRadialLength = gameplayLaneRadius - pillarRadius;
 const floaterDiscGeometry = new THREE.CylinderGeometry(ballRadius * 1.4, ballRadius * 1.4, 0.1, 16);
 const floaterMaterial = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.6, metalness: 0.1 });
-const spikeCycleDuration = 5.4;
-const spikeUpDuration = 2;
-const spikeMoveDuration = 0.2;
-const spikeDownDuration = 3;
-const platformSpikeHeight = 0.5;
 
-const ballStartY = 1.9;
 let ballVelocity = 0;
 let gravity = defaultGravity;
 let terminalVelocity = defaultTerminalVelocity;
@@ -241,6 +200,7 @@ let isPaused = false;
 let impulseMode = 'A';
 let impulseBResetSpeed = defaultGravity * 0.1;
 let impulseBShotgunImpulse = 4;
+let impulseCfactor = 0.9;
 let controlMode = 'A';
 let twistBMode = false;
 let timeScale = 1;
@@ -272,7 +232,6 @@ let bulletImpulse = defaultBulletImpulse;
 let ammo = maxAmmo;
 let isShooting = false;
 let fireCooldown = 0;
-let lastEmptySoundTime = -Infinity;
 let combo = 0;
 let comboSprite = null;
 let comboTexture = null;
@@ -354,7 +313,6 @@ const acidPuddleGeometry = new THREE.CircleGeometry(0.22, 20);
 const acidDropletGeometry = new THREE.SphereGeometry(0.1, 10, 8);
 const acidSnailBodyGeometry = new THREE.SphereGeometry(0.22, 14, 10);
 const acidSnailShellGeometry = new THREE.SphereGeometry(0.28, 16, 12);
-const groundEnemyFootOffset = 0.2;
 const shockwaveGeometry = new THREE.SphereGeometry(1, 24, 16);
 const pillarLaserRingGeometry = new THREE.TorusGeometry(gameplayLaneRadius, 0.035, 8, 96);
 const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
@@ -427,456 +385,12 @@ const drag = {
   targetRotation: 0,
 };
 
-let audioCtx = null;
-let invulnerabilityAudio = null;
-
-function ensureAudioCtx() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
-  return audioCtx;
-}
-
-function playBounceSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(660, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1100, ctx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.28, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.18);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playFailSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(320, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(90, ctx.currentTime + 0.45);
-    gain.gain.setValueAtTime(0.32, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.5);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playShootSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(520, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(260, ctx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.13);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.13);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playEmptyAmmoSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    if (ctx.currentTime - lastEmptySoundTime < 0.08) return;
-    lastEmptySoundTime = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(140, ctx.currentTime);
-    osc.frequency.setValueAtTime(110, ctx.currentTime + 0.08);
-    gain.gain.setValueAtTime(0.18, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.16);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playReloadSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-
-    const click = ctx.createOscillator();
-    const clickGain = ctx.createGain();
-    click.type = 'square';
-    click.frequency.setValueAtTime(180, now);
-    click.frequency.exponentialRampToValueAtTime(95, now + 0.055);
-    clickGain.gain.setValueAtTime(0.22, now);
-    clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-    click.connect(clickGain);
-    clickGain.connect(ctx.destination);
-    click.start(now);
-    click.stop(now + 0.08);
-
-    const ching = ctx.createOscillator();
-    const chingGain = ctx.createGain();
-    ching.type = 'sine';
-    ching.frequency.setValueAtTime(1320, now + 0.055);
-    ching.frequency.exponentialRampToValueAtTime(1900, now + 0.13);
-    chingGain.gain.setValueAtTime(0.001, now + 0.045);
-    chingGain.gain.linearRampToValueAtTime(0.24, now + 0.065);
-    chingGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
-    ching.connect(chingGain);
-    chingGain.connect(ctx.destination);
-    ching.start(now + 0.045);
-    ching.stop(now + 0.42);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playBatDeathSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(1250, now);
-    osc.frequency.exponentialRampToValueAtTime(520, now + 0.18);
-    gain.gain.setValueAtTime(0.18, now);
-    gain.gain.linearRampToValueAtTime(0.24, now + 0.035);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.22);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playCannonActivateSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(180, now);
-    osc.frequency.exponentialRampToValueAtTime(620, now + 0.32);
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.18, now + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.36);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playCannonFireSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const zap = ctx.createOscillator();
-    const zapGain = ctx.createGain();
-    zap.type = 'square';
-    zap.frequency.setValueAtTime(1300, now);
-    zap.frequency.exponentialRampToValueAtTime(220, now + 0.16);
-    zapGain.gain.setValueAtTime(0.28, now);
-    zapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-    zap.connect(zapGain);
-    zapGain.connect(ctx.destination);
-    zap.start(now);
-    zap.stop(now + 0.2);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playRewardSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(520, now);
-    osc.frequency.setValueAtTime(780, now + 0.06);
-    osc.frequency.setValueAtTime(1040, now + 0.13);
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.24);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playCoinCubeCollectSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(880, now);
-    osc.frequency.exponentialRampToValueAtTime(1480, now + 0.08);
-    gain.gain.setValueAtTime(0.16, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.14);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playGlassBreakSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(1350, now);
-    osc.frequency.exponentialRampToValueAtTime(420, now + 0.18);
-    gain.gain.setValueAtTime(0.11, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.22);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playPufferExplosionSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const boom = ctx.createOscillator();
-    const boomGain = ctx.createGain();
-    boom.type = 'sawtooth';
-    boom.frequency.setValueAtTime(180, now);
-    boom.frequency.exponentialRampToValueAtTime(45, now + 0.38);
-    boomGain.gain.setValueAtTime(0.34, now);
-    boomGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
-    boom.connect(boomGain);
-    boomGain.connect(ctx.destination);
-    boom.start(now);
-    boom.stop(now + 0.42);
-
-    const pop = ctx.createOscillator();
-    const popGain = ctx.createGain();
-    pop.type = 'square';
-    pop.frequency.setValueAtTime(520, now);
-    pop.frequency.exponentialRampToValueAtTime(120, now + 0.09);
-    popGain.gain.setValueAtTime(0.22, now);
-    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    pop.connect(popGain);
-    popGain.connect(ctx.destination);
-    pop.start(now);
-    pop.stop(now + 0.12);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playMetallicBlipSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(1800, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.12);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function playAcidBurnSound() {
-  try {
-    const ctx = ensureAudioCtx();
-    const now = ctx.currentTime;
-    const hiss = ctx.createOscillator();
-    const hissGain = ctx.createGain();
-    hiss.type = 'sawtooth';
-    hiss.frequency.setValueAtTime(2200, now);
-    hiss.frequency.exponentialRampToValueAtTime(800, now + 0.2);
-    hissGain.gain.setValueAtTime(0.18, now);
-    hissGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-    hiss.connect(hissGain);
-    hissGain.connect(ctx.destination);
-    hiss.start(now);
-    hiss.stop(now + 0.25);
-    const pop = ctx.createOscillator();
-    const popGain = ctx.createGain();
-    pop.type = 'sine';
-    pop.frequency.setValueAtTime(300, now + 0.05);
-    pop.frequency.exponentialRampToValueAtTime(120, now + 0.15);
-    popGain.gain.setValueAtTime(0.14, now + 0.05);
-    popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-    pop.connect(popGain);
-    popGain.connect(ctx.destination);
-    pop.start(now + 0.05);
-    pop.stop(now + 0.2);
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function startInvulnerabilityMusic() {
-  try {
-    if (invulnerabilityAudio) return;
-    const ctx = ensureAudioCtx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(660, ctx.currentTime);
-    gain.gain.setValueAtTime(0.045, ctx.currentTime);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    invulnerabilityAudio = { osc, gain, nextChange: 0, note: 0 };
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function updateInvulnerabilityMusic() {
-  if (!invulnerabilityAudio || !audioCtx) return;
-  const notes = [660, 880, 990, 1320];
-  if (audioCtx.currentTime >= invulnerabilityAudio.nextChange) {
-    invulnerabilityAudio.osc.frequency.setValueAtTime(notes[invulnerabilityAudio.note % notes.length], audioCtx.currentTime);
-    invulnerabilityAudio.note += 1;
-    invulnerabilityAudio.nextChange = audioCtx.currentTime + 0.16;
-  }
-}
-
-function stopInvulnerabilityMusic() {
-  if (!invulnerabilityAudio || !audioCtx) return;
-  invulnerabilityAudio.gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
-  invulnerabilityAudio.osc.stop(audioCtx.currentTime + 0.14);
-  invulnerabilityAudio = null;
-}
-
-function makeArcGeometry(innerRadius, outerRadius, startAngle, endAngle, depth) {
-  const positions = [];
-  const indices = [];
-  const segmentCount = Math.max(8, Math.ceil(((endAngle - startAngle) / twoPi) * 80));
-  const yTop = depth / 2;
-  const yBottom = -depth / 2;
-
-  function vertex(radius, angle, y) {
-    const index = positions.length / 3;
-    positions.push(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-    return index;
-  }
-
-  function quad(a, b, c, d) {
-    indices.push(a, b, c, a, c, d);
-  }
-
-  for (let i = 0; i < segmentCount; i += 1) {
-    const a0 = startAngle + ((endAngle - startAngle) * i) / segmentCount;
-    const a1 = startAngle + ((endAngle - startAngle) * (i + 1)) / segmentCount;
-
-    const innerTop0 = vertex(innerRadius, a0, yTop);
-    const innerTop1 = vertex(innerRadius, a1, yTop);
-    const outerTop1 = vertex(outerRadius, a1, yTop);
-    const outerTop0 = vertex(outerRadius, a0, yTop);
-    quad(outerTop0, innerTop0, innerTop1, outerTop1);
-
-    const outerBottom0 = vertex(outerRadius, a0, yBottom);
-    const outerBottom1 = vertex(outerRadius, a1, yBottom);
-    const innerBottom1 = vertex(innerRadius, a1, yBottom);
-    const innerBottom0 = vertex(innerRadius, a0, yBottom);
-    quad(outerBottom0, outerBottom1, innerBottom1, innerBottom0);
-
-    const outerSide0Top = vertex(outerRadius, a0, yTop);
-    const outerSide1Top = vertex(outerRadius, a1, yTop);
-    const outerSide1Bottom = vertex(outerRadius, a1, yBottom);
-    const outerSide0Bottom = vertex(outerRadius, a0, yBottom);
-    quad(outerSide0Top, outerSide1Top, outerSide1Bottom, outerSide0Bottom);
-
-    const innerSide0Top = vertex(innerRadius, a0, yTop);
-    const innerSide0Bottom = vertex(innerRadius, a0, yBottom);
-    const innerSide1Bottom = vertex(innerRadius, a1, yBottom);
-    const innerSide1Top = vertex(innerRadius, a1, yTop);
-    quad(innerSide0Top, innerSide0Bottom, innerSide1Bottom, innerSide1Top);
-  }
-
-  const capStartOuterTop = vertex(outerRadius, startAngle, yTop);
-  const capStartInnerTop = vertex(innerRadius, startAngle, yTop);
-  const capStartInnerBottom = vertex(innerRadius, startAngle, yBottom);
-  const capStartOuterBottom = vertex(outerRadius, startAngle, yBottom);
-  quad(capStartOuterTop, capStartInnerTop, capStartInnerBottom, capStartOuterBottom);
-
-  const capEndOuterTop = vertex(outerRadius, endAngle, yTop);
-  const capEndOuterBottom = vertex(outerRadius, endAngle, yBottom);
-  const capEndInnerBottom = vertex(innerRadius, endAngle, yBottom);
-  const capEndInnerTop = vertex(innerRadius, endAngle, yTop);
-  quad(capEndOuterTop, capEndOuterBottom, capEndInnerBottom, capEndInnerTop);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-function angleInArc(angle, start, end) {
-  if (start <= end) return angle >= start && angle <= end;
-  return angle >= start || angle <= end;
-}
-
 function getBulletLaneAngle() {
   return Math.atan2(ball.position.z, ball.position.x);
 }
 
 function getBulletLaneRadius() {
   return Math.hypot(ball.position.x, ball.position.z);
-}
-
-function isBlueTile(tile) {
-  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop';
-}
-
-function isFlashablePlatformTile(tile) {
-  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop' || tile.type === 'gray';
 }
 
 function makeCrackLine(startAngle, endAngle) {
@@ -1076,6 +590,7 @@ function createPlatform(y, id, options = {}) {
   world.add(group);
   const platData = { id, group, tiles, scored: false, final: isFinal };
   platforms.push(platData);
+  registerPlatformInBand(platData);
 
   if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
   if (!isFinal) maybeSpawnCannon(platData, id);
@@ -2426,6 +1941,7 @@ function syncOptionsPanel() {
   coinAttractionInput.value = coinAttractionRadius.toFixed(2);
   impulseBResetInput.value = impulseBResetSpeed.toFixed(1);
   impulseBShotgunInput.value = impulseBShotgunImpulse.toFixed(1);
+  impulseCFactorInput.value = impulseCfactor.toFixed(2);
 }
 
 function getLevelTarget(level = currentLevel) {
@@ -2443,14 +1959,6 @@ function updateLevelUI() {
   levelLabelEl.textContent = `Level ${levelInfo.level}`;
   progressLabelEl.textContent = `${platformsPassedThisLevel} / ${levelInfo.target}`;
   progressFillEl.style.width = `${levelInfo.progress * 100}%`;
-}
-
-function updateHeartsUI() {
-  heartsEl.textContent = `${'♥'.repeat(hp)}${'♡'.repeat(maxHp - hp)}`;
-}
-
-function updateCoinsUI() {
-  coinsEl.textContent = `${coins} coins`;
 }
 
 function worldToScreen(position) {
@@ -2482,8 +1990,8 @@ function spawnCoinPickupAnimation(worldPosition, value = 5) {
 }
 
 function updatePersistentUI() {
-  updateHeartsUI();
-  updateCoinsUI();
+  updateHeartsUI(heartsEl, hp, maxHp);
+  updateCoinsUI(coinsEl, coins);
   updateLevelUI();
 }
 
@@ -2539,6 +2047,9 @@ function fireMachinegun() {
 
   if (impulseMode === 'B') {
     ballVelocity = impulseBResetSpeed;
+  } else if (impulseMode === 'C' && ballVelocity < 0) {
+    const instantVel = Math.abs(ballVelocity);
+    ballVelocity += impulseCfactor * instantVel;
   } else {
     const shotVelocityCap = getShotUpwardVelocityCap();
     if (ballVelocity < shotVelocityCap) {
@@ -2574,6 +2085,10 @@ function fireShotgun() {
 
   if (impulseMode === 'B') {
     ballVelocity = impulseBResetSpeed;
+    ballVelocity -= impulseBShotgunImpulse;
+  } else if (impulseMode === 'C' && ballVelocity < 0) {
+    const instantVel = Math.abs(ballVelocity);
+    ballVelocity += impulseCfactor * instantVel;
     ballVelocity -= impulseBShotgunImpulse;
   } else {
     const shotVelocityCap = Math.max(baseShotUpwardVelocityCap, bulletImpulse * 2.25);
@@ -2881,7 +2396,7 @@ function collectBounceCube(cube, worldPos) {
   coins += cube.value;
   score += 1;
   scoreEl.textContent = String(score);
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   spawnCoinPickupAnimation(worldPos, cube.value);
   playCoinCubeCollectSound();
   deactivateBounceCube(cube);
@@ -3005,7 +2520,7 @@ function breakCrate(crateIndex, byBullet = false) {
     spawnCoinPickup(_crateWorldPosition, platGroup);
   } else {
     coins += 5;
-    updateCoinsUI();
+    updateCoinsUI(coinsEl, coins);
     spawnCoinPickupAnimation(_crateWorldPosition);
   }
   return true;
@@ -3034,7 +2549,7 @@ function updateCoinPickups(dt) {
     if (dx * dx + dy * dy + dz * dz <= (ballRadius + 0.25) * (ballRadius + 0.25)) {
       pickup.collected = true;
       coins += pickup.value;
-      updateCoinsUI();
+      updateCoinsUI(coinsEl, coins);
       spawnCoinPickupAnimation(_pickupWorldPosition);
       pickup.mesh.removeFromParent();
       pickup.mesh.geometry.dispose();
@@ -3166,7 +2681,7 @@ function killEnemyAt(index, explosionColor) {
       vampiricKillCount = 0;
       if (hp < maxHp) {
         hp += 1;
-        updateHeartsUI();
+        updateHeartsUI(heartsEl, hp, maxHp);
         spawnFloatingText('VAMP +1', ball.position, 0xe91e63, true);
       }
     }
@@ -4262,7 +3777,7 @@ function applyDamage() {
   }
 
   hp -= 1;
-  updateHeartsUI();
+  updateHeartsUI(heartsEl, hp, maxHp);
   damageFlashTimer = 0.28;
   damageSlowdownTimer = 2;
   timeScale = 0.5;
@@ -4366,7 +3881,7 @@ function buyShopBullet() {
   ammo = maxAmmo;
   rebuildAmmoUI();
   syncOptionsPanel();
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4375,8 +3890,8 @@ function buyShopHp() {
   if (coins < 20 || hp >= maxHp) return;
   coins -= 20;
   hp += 1;
-  updateHeartsUI();
-  updateCoinsUI();
+  updateHeartsUI(heartsEl, hp, maxHp);
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4386,7 +3901,7 @@ function buyShopArmor() {
   coins -= 20;
   hasShield = true;
   shieldMesh.visible = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4396,7 +3911,7 @@ function buyShopInvuln() {
   coins -= 30;
   invulnerabilityTimer = 10;
   startInvulnerabilityMusic();
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4405,7 +3920,7 @@ function buyShopPiercing() {
   if (coins < piercingCost || piercingBulletsUnlocked) return;
   coins -= piercingCost;
   piercingBulletsUnlocked = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4414,7 +3929,7 @@ function buyShopVampiric() {
   if (coins < vampiricCost || vampiricLifeUnlocked) return;
   coins -= vampiricCost;
   vampiricLifeUnlocked = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4423,7 +3938,7 @@ function buyShopComboShield() {
   if (coins < comboShieldCost || comboShieldUnlocked) return;
   coins -= comboShieldCost;
   comboShieldUnlocked = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   updateShopUI();
   playRewardSound();
 }
@@ -4543,6 +4058,39 @@ function platformY(platform) {
   return platform.group.position.y;
 }
 
+const platformBandIndex = new Map();
+
+function registerPlatformInBand(platform) {
+  const y = platformY(platform);
+  const band = Math.round(y / platformSpacing);
+  if (!platformBandIndex.has(band)) platformBandIndex.set(band, []);
+  platformBandIndex.get(band).push(platform);
+}
+
+function unregisterPlatformFromBand(platform) {
+  const y = platformY(platform);
+  const band = Math.round(y / platformSpacing);
+  const arr = platformBandIndex.get(band);
+  if (!arr) return;
+  const idx = arr.indexOf(platform);
+  if (idx !== -1) arr.splice(idx, 1);
+}
+
+function getPlatformsNearY(yMin, yMax) {
+  const bandMin = Math.round(yMin / platformSpacing) - 1;
+  const bandMax = Math.round(yMax / platformSpacing) + 1;
+  const result = [];
+  for (let b = bandMin; b <= bandMax; b += 1) {
+    const arr = platformBandIndex.get(b);
+    if (arr) {
+      for (let i = 0; i < arr.length; i += 1) {
+        result.push(arr[i]);
+      }
+    }
+  }
+  return result;
+}
+
 function getTileAtWorldPoint(platform, worldPoint) {
   _bulletImpactLocal.copy(worldPoint);
   platform.group.worldToLocal(_bulletImpactLocal);
@@ -4558,7 +4106,7 @@ function checkBulletPlatformHit(bullet, previousY) {
   const currentY = bullet.mesh.position.y;
   const crossedPlatforms = [];
 
-  for (const platform of platforms) {
+  for (const platform of getPlatformsNearY(Math.min(previousY, currentY), Math.max(previousY, currentY))) {
     const platformTop = platformY(platform) + platformThickness / 2;
     if (previousY >= platformTop && currentY <= platformTop) {
       crossedPlatforms.push({ platform, platformTop });
@@ -4606,7 +4154,7 @@ function handlePlatformUndersideCollision(previousY) {
   const topNow = ball.position.y + ballRadius;
   const crossedPlatforms = [];
 
-  for (const platform of platforms) {
+  for (const platform of getPlatformsNearY(Math.min(topBefore, topNow), Math.max(topBefore, topNow))) {
     const platformBottom = platformY(platform) - platformThickness / 2;
     if (topBefore <= platformBottom && topNow >= platformBottom) {
       crossedPlatforms.push({ platform, platformBottom });
@@ -4633,7 +4181,7 @@ function handlePlatformCollision(previousY) {
   const bottomBefore = previousY - ballRadius;
   const crossedPlatforms = [];
 
-  for (const platform of platforms) {
+  for (const platform of getPlatformsNearY(Math.min(bottomBefore, bottomNow), Math.max(bottomBefore, bottomNow))) {
     const platformTop = platformY(platform) + platformThickness / 2;
 
     if (bottomBefore >= platformTop && bottomNow <= platformTop) {
@@ -4729,6 +4277,7 @@ function recyclePlatforms() {
           coinPickups.splice(c, 1);
         }
       }
+      unregisterPlatformFromBand(platform);
       world.remove(platform.group);
       platform.group.traverse((child) => {
         if (child.geometry) child.geometry.dispose();
@@ -5269,115 +4818,6 @@ for (let i = 0; i < 2; i += 1) {
   arScene.add(controller);
 }
 
-function onPointerDown(event) {
-  if (isPaused || isLevelComplete) return;
-  if (isGameOver) {
-    if (leaderboardPendingClose) return;
-    if (!leaderboardPanelEl.hidden) {
-      leaderboardPendingClose = false;
-      return;
-    }
-    resetGame();
-    return;
-  }
-
-  if (controlMode === 'B' && event.pointerType === 'touch') {
-    touchPointerIds.add(event.pointerId);
-    if (touchPointerIds.size === 1) {
-      stopShooting();
-      drag.active = true;
-      drag.x = event.clientX;
-    }
-    if (touchPointerIds.size >= 2) {
-      drag.x = event.clientX;
-      startShooting();
-    }
-    return;
-  }
-
-  if (controlMode === 'B') {
-    stopShooting();
-    drag.active = true;
-    drag.x = event.clientX;
-    return;
-  }
-
-  stopShooting();
-  drag.active = true;
-  drag.x = event.clientX;
-}
-
-function onPointerMove(event) {
-  if (!drag.active || isGameOver || isPaused || isLevelComplete) return;
-  const dx = event.clientX - drag.x;
-  drag.x = event.clientX;
-  drag.targetRotation += dx * 0.012 * timeScale;
-}
-
-function onPointerUp(event) {
-  if (controlMode === 'B' && event.pointerType === 'touch') {
-    touchPointerIds.delete(event.pointerId);
-    if (touchPointerIds.size < 2) {
-      stopShooting();
-    }
-    if (touchPointerIds.size === 0) {
-      drag.active = false;
-    }
-    return;
-  }
-
-  if (controlMode === 'B') {
-    drag.active = false;
-    return;
-  }
-
-  const wasDragging = drag.active;
-  drag.active = false;
-  if (wasDragging && !isGameOver && !isPaused && !isLevelComplete) {
-    startShooting();
-  }
-}
-
-function onPointerCancel(event) {
-  if (controlMode === 'B' && event && event.pointerType === 'touch') {
-    touchPointerIds.delete(event.pointerId);
-    if (touchPointerIds.size < 2) stopShooting();
-    if (touchPointerIds.size === 0) drag.active = false;
-    return;
-  }
-  drag.active = false;
-  stopShooting();
-}
-
-function onKeyDown(event) {
-  const target = event.target;
-  const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-  if (!isTyping && event.key === '1') {
-    selectWeapon('machinegun');
-    return;
-  }
-  if (!isTyping && event.key === '2') {
-    selectWeapon('shotgun');
-    return;
-  }
-  if (!isTyping && event.code === 'Space' && controlMode === 'B') {
-    event.preventDefault();
-    if (!isGameOver && !isPaused && !isLevelComplete) {
-      startShooting();
-    }
-    return;
-  }
-  if (event.key.toLowerCase() === 'p') {
-    if (isGameOver) return;
-    setPaused(!isPaused);
-  }
-}
-
-function onKeyUp(event) {
-  if (event.code === 'Space' && controlMode === 'B') {
-    stopShooting();
-  }
-}
 
 pauseButton.addEventListener('pointerdown', (event) => {
   event.stopPropagation();
@@ -5408,6 +4848,10 @@ extraButton.addEventListener('click', (event) => {
   pausePanelEl.hidden = true;
   impulseBResetLabel.hidden = impulseMode !== 'B';
   impulseBShotgunLabel.hidden = impulseMode !== 'B';
+  impulseCFactorLabel.hidden = impulseMode !== 'C';
+  impulseAButton.classList.toggle('active', impulseMode === 'A');
+  impulseBButton.classList.toggle('active', impulseMode === 'B');
+  impulseCButton.classList.toggle('active', impulseMode === 'C');
 });
 
 closeExtraButton.addEventListener('pointerdown', (event) => {
@@ -5425,16 +4869,35 @@ impulseAButton.addEventListener('click', () => {
   impulseMode = 'A';
   impulseAButton.classList.add('active');
   impulseBButton.classList.remove('active');
+  impulseCButton.classList.remove('active');
   impulseBResetLabel.hidden = true;
   impulseBShotgunLabel.hidden = true;
+  impulseCFactorLabel.hidden = true;
 });
 
 impulseBButton.addEventListener('click', () => {
   impulseMode = 'B';
   impulseBButton.classList.add('active');
   impulseAButton.classList.remove('active');
+  impulseCButton.classList.remove('active');
   impulseBResetLabel.hidden = false;
   impulseBShotgunLabel.hidden = false;
+  impulseCFactorLabel.hidden = true;
+});
+
+impulseCButton.addEventListener('click', () => {
+  impulseMode = 'C';
+  impulseCButton.classList.add('active');
+  impulseAButton.classList.remove('active');
+  impulseBButton.classList.remove('active');
+  impulseBResetLabel.hidden = true;
+  impulseBShotgunLabel.hidden = true;
+  impulseCFactorLabel.hidden = false;
+});
+
+impulseCFactorInput.addEventListener('input', () => {
+  const val = Number(impulseCFactorInput.value);
+  impulseCfactor = Number.isFinite(val) ? Math.max(0, Math.min(1, val)) : 0.9;
 });
 
 impulseBResetInput.addEventListener('input', () => {
@@ -5496,7 +4959,7 @@ rewardHpButton.addEventListener('click', () => {
   playRewardSound();
   if (hp < maxHp) {
     hp += 1;
-    updateHeartsUI();
+    updateHeartsUI(heartsEl, hp, maxHp);
   }
   rewardChosen = true;
   updateLevelCompleteUI();
@@ -5517,7 +4980,7 @@ buyInvulnerabilityButton.addEventListener('click', () => {
   if (coins < invulnerabilityCost || pendingInvulnerability) return;
   coins -= invulnerabilityCost;
   pendingInvulnerability = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   shopStatusEl.textContent = 'Invulnerability will activate at the start of the next level.';
   updateLevelCompleteUI();
 });
@@ -5526,7 +4989,7 @@ buyShieldButton.addEventListener('click', () => {
   if (coins < shieldCost || pendingShield || hasShield) return;
   coins -= shieldCost;
   pendingShield = true;
-  updateCoinsUI();
+  updateCoinsUI(coinsEl, coins);
   shopStatusEl.textContent = 'Shield will activate at the start of the next level.';
   updateLevelCompleteUI();
 });
@@ -5646,12 +5109,23 @@ arModeButton.addEventListener('click', (event) => {
   startArMode();
 });
 
-window.addEventListener('pointerdown', onPointerDown);
-window.addEventListener('pointermove', onPointerMove);
-window.addEventListener('pointerup', onPointerUp);
-window.addEventListener('pointercancel', onPointerCancel);
-window.addEventListener('keydown', onKeyDown);
-window.addEventListener('keyup', onKeyUp);
+setupInputListeners({
+  get isPaused() { return isPaused; },
+  get isLevelComplete() { return isLevelComplete; },
+  get isGameOver() { return isGameOver; },
+  leaderboardPendingClose,
+  leaderboardPanelEl,
+  resetGame,
+  get controlMode() { return controlMode; },
+  touchPointerIds,
+  stopShooting,
+  startShooting,
+  drag,
+  get timeScale() { return timeScale; },
+  selectWeapon,
+  setPaused,
+});
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();

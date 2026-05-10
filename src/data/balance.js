@@ -1,0 +1,9 @@
+export const goldBlocksPerLevel = 3;
+export const sawBladesPerLevel = 3;
+export const maxHp = 5;
+export const invulnerabilityCost = 20;
+export const shieldCost = 20;
+export const piercingCost = 25;
+export const vampiricCost = 30;
+export const comboShieldCost = 25;
+export const comboShieldThreshold = 5;
