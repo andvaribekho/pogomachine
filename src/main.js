@@ -349,9 +349,6 @@ const platformSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, 
 const pillarSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
 const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
 const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
-const yellowWormBodyMaterial = new THREE.MeshStandardMaterial({ color: 0xffeb3b, roughness: 0.5, metalness: 0.08 });
-const yellowWormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0xf9a825, roughness: 0.45, metalness: 0.08 });
-const miniWormGeometry = new THREE.SphereGeometry(0.09, 10, 8);
 const turtleBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.5, metalness: 0.05 });
 const turtleShellMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, emissive: 0x7a0000, emissiveIntensity: 0.18, roughness: 0.44, metalness: 0.08 });
 const jellyfishMaterial = new THREE.MeshStandardMaterial({ color: 0x9c27b0, emissive: 0x4a148c, emissiveIntensity: 0.28, roughness: 0.36, transparent: true, opacity: 0.82 });
@@ -797,37 +794,6 @@ function createWormMesh() {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.x = -i * 0.24;
     mesh.scale.y = 0.62;
-    mesh.castShadow = true;
-    group.add(mesh);
-    segments.push(mesh);
-  }
-  return { group, segments };
-}
-
-function createYellowWormMesh() {
-  const group = new THREE.Group();
-  const segments = [];
-  for (let i = 0; i < 4; i += 1) {
-    const geometry = i === 0 ? wormHeadGeometry : wormSegmentGeometry;
-    const material = i === 0 ? yellowWormHeadMaterial.clone() : yellowWormBodyMaterial.clone();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.x = -i * 0.24;
-    mesh.scale.y = 0.62;
-    mesh.castShadow = true;
-    group.add(mesh);
-    segments.push(mesh);
-  }
-  return { group, segments };
-}
-
-function createMiniWormMesh() {
-  const group = new THREE.Group();
-  const segments = [];
-  for (let i = 0; i < 3; i += 1) {
-    const material = i === 0 ? yellowWormHeadMaterial.clone() : yellowWormBodyMaterial.clone();
-    const mesh = new THREE.Mesh(miniWormGeometry, material);
-    mesh.position.x = -i * 0.14;
-    mesh.scale.setScalar(0.55);
     mesh.castShadow = true;
     group.add(mesh);
     segments.push(mesh);
@@ -1311,7 +1277,7 @@ function positionEnemy(enemy) {
     return;
   }
 
-  if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') {
+  if (enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') {
     const localPosition = _enemyLocalPosition.set(
       Math.cos(enemy.localAngle) * enemy.orbitRadius,
       platformThickness / 2 + 0.2,
@@ -1413,7 +1379,7 @@ function isWormBodySupported(platformData, angle, radius) {
 }
 
 function isGroundEnemy(enemy) {
-  return enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail';
+  return enemy.type === 'worm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail';
 }
 
 function startGroundEnemyFall(enemy) {
@@ -1480,50 +1446,6 @@ function createWorm(platformData, id, tile) {
     flashTimer: 0,
   };
   positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
-}
-
-function createYellowWorm(platformData, id, tile) {
-  const worm = createYellowWormMesh();
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'yellowWorm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius + (Math.random() - 0.5) * 0.35,
-    speed: 0.45 + Math.random() * 0.45,
-    collisionRadius: 0.34,
-    hp: 3,
-    flashTimer: 0,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
-}
-
-function createMiniWorm(position, direction) {
-  const worm = createMiniWormMesh();
-  worm.group.position.copy(position);
-  worm.group.position.y += 0.3;
-  const enemy = {
-    type: 'miniWorm',
-    group: worm.group,
-    segments: worm.segments,
-    y: position.y + 0.3,
-    collisionRadius: 0.18,
-    hp: 1,
-    flashTimer: 0,
-    speed: 0.6 + Math.random() * 0.4,
-    direction,
-    bobOffset: Math.random() * Math.PI * 2,
-  };
   scene.add(enemy.group);
   enemies.push(enemy);
 }
@@ -1739,8 +1661,6 @@ function maybeSpawnWorms(platformData, id) {
     if (groundWormsSinceTurtle >= 3) {
       createTurtle(platformData, id, shuffled[i]);
       groundWormsSinceTurtle = 0;
-    } else if (id > 10 && Math.random() < 0.3) {
-      createYellowWorm(platformData, id, shuffled[i]);
     } else {
       createWorm(platformData, id, shuffled[i]);
       groundWormsSinceTurtle += 1;
@@ -2740,22 +2660,17 @@ function removeEnemyAt(index, explosionColor) {
   } else {
     enemy.group.getWorldPosition(position);
   }
-  const splitEnemy = enemy.type === 'yellowWorm';
   disposeEnemy(enemy);
   enemies.splice(index, 1);
   spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
   if (enemy.type === 'jellyfish') splitJellyfish(enemy, position);
   if (enemy.type === 'pufferBomb') explodePuffer(position);
-  if (splitEnemy) {
-    createMiniWorm(position.clone().add(_enemyLocalPosition.set(0.25, 0, 0)), 1);
-    createMiniWorm(position.clone().add(_enemyLocalPosition.set(-0.25, 0, 0)), -1);
-  }
   spawnBounceCubes(position);
 }
 
 function killEnemyAt(index, explosionColor) {
   const enemy = enemies[index];
-  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine') playBatDeathSound();
+  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine') playBatDeathSound();
   score += 5 * Math.max(1, combo);
   scoreEl.textContent = String(score);
   removeEnemyAt(index, explosionColor);
@@ -2776,14 +2691,14 @@ function killEnemyAt(index, explosionColor) {
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
   if (enemy.type === 'acidSnail') return;
-  if (enemy.type === 'bat' || enemy.type === 'miniWorm') {
-    killEnemyAt(enemyIndex, enemy.type === 'miniWorm' ? 0xffeb3b : colors.particle);
+  if (enemy.type === 'bat') {
+    killEnemyAt(enemyIndex, colors.particle);
     return;
   }
 
   enemy.hp -= 1;
   enemy.flashTimer = 0.18;
-  if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'pillarWorm') {
+  if (enemy.type === 'worm' || enemy.type === 'pillarWorm') {
     for (const segment of enemy.segments) {
       segment.material.emissive.setHex(0xffeb3b);
       segment.material.emissiveIntensity = 0.8;
@@ -2804,7 +2719,7 @@ function damageEnemy(enemyIndex) {
   }
 
   if (enemy.hp <= 0) {
-    killEnemyAt(enemyIndex, enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'pillarWorm' ? colors.worm : colors.red);
+    killEnemyAt(enemyIndex, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : colors.red);
   }
 }
 
@@ -3319,14 +3234,6 @@ function updateEnemies(dt) {
           }
         }
       }
-    } else if (enemy.type === 'miniWorm') {
-      enemy.group.position.x += enemy.speed * enemy.direction * dt;
-      enemy.group.position.y += Math.sin(scaledTime * 4 + (enemy.bobOffset ?? 0)) * 0.2 * dt;
-      if (enemy.group.position.y < ball.position.y - 5) {
-        disposeEnemy(enemy);
-        enemies.splice(i, 1);
-        continue;
-      }
     } else {
       const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
       const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
@@ -3350,7 +3257,7 @@ function updateEnemies(dt) {
       const flap = Math.sin(scaledTime * 18 + enemy.flapOffset) * 0.55;
       enemy.leftWing.rotation.z = -0.28 - flap;
       enemy.rightWing.rotation.z = 0.28 + flap;
-    } else if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'miniWorm') {
+    } else if (enemy.type === 'worm' || enemy.type === 'pillarWorm') {
       const wiggle = Math.sin(performance.now() * 0.012 + enemy.id) * 0.05;
       enemy.group.rotation.z = wiggle;
       if (enemy.flashTimer > 0) {
@@ -3391,7 +3298,7 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
       if (enemy.type === 'turtle') applyDamage();
       if (enemy.type === 'porcupine' && enemy.spikesOut) {
         applyDamage();
@@ -3426,7 +3333,7 @@ function updateEnemies(dt) {
           continue;
         }
       }
-      killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'miniWorm' ? 0xffeb3b : enemy.type === 'turtle' ? colors.red : colors.particle);
+      killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'turtle' ? colors.red : colors.particle);
       if (reloadAmmo()) {
         spawnFloatingText('Reload', ball.position);
         playReloadSound();
@@ -3752,15 +3659,7 @@ function startLevel() {
     createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
     nextPlatformId += 1;
   }
-  const secondPlatform = platforms.find(p => p.id === 1 && !p.final);
-  if (secondPlatform) {
-    const validTiles = secondPlatform.tiles.filter(isWormTile);
-    if (validTiles.length > 0) {
-      const tile = validTiles[Math.floor(Math.random() * validTiles.length)];
-      createYellowWorm(secondPlatform, 1, tile);
-    }
-  }
-  spawnGoldBlocksForLevel();
+spawnGoldBlocksForLevel();
   spawnPillarSpikesForLevel();
   spawnFloatersForLevel();
   spawnSawBladesForLevel();
