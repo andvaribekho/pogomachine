@@ -1,0 +1,1113 @@
+================================================================================
+HELIX DESCENT — PORT PLAN: THREE.JS  ->  PLAYCANVAS
+================================================================================
+Source repo  : /Users/brunocamousseigt/proyectos/pogo/pogomachine (Three.js + Vite)
+Target tool  : PlayCanvas Editor + PlayCanvas VS Code Extension (script sync)
+Target physics: NONE of pc.RigidBodyComponent / pc.CollisionComponent / Ammo.
+                The current hand-rolled math physics is preserved verbatim,
+                rewritten on top of pc.Vec3 / pc.Quat / pc.math.
+Asset policy : All audio is imported as MP3, all 3D content as GLB, all 2D
+                content as WebP. Nothing is generated procedurally at runtime.
+Author       : Claude (port plan), brunocamousseigt (project owner)
+Date         : 2026-05-10
+
+This plan is the execution map. Read top-to-bottom; the Editor work and the
+VS Code script work are interleaved per system. Section numbering is stable —
+quote them in PRs / issues.
+
+--------------------------------------------------------------------------------
+0. GROUND RULES
+--------------------------------------------------------------------------------
+0.1  PlayCanvas is the source of truth for the SCENE. The Editor owns the
+     hierarchy, materials, lights, render layers, and template (prefab)
+     definitions. Scripts only INSTANTIATE templates and READ/WRITE entity
+     transforms / properties.
+
+0.2  VS Code is the source of truth for the SCRIPTS. We do not edit script
+     bodies in the Editor's web editor; the VS Code extension syncs files in
+     the project's `scripts/` folder.
+
+0.3  No physics engine. There is no RigidBodyComponent, no CollisionComponent,
+     no Ammo runtime. All collisions are math-based queries (sphere-sphere,
+     sphere-AABB, swept-Y plane crossing) authored as plain JS in scripts.
+     Reuse the algorithms from src/main.js verbatim; only swap the math
+     primitives (THREE.Vector3 -> pc.Vec3).
+
+0.4  Asset-only content. No CanvasTexture, no procedural geometry, no
+     ExtrudeGeometry. Where the source generated something at runtime, we
+     either:
+       (a) replace it with an authored GLB / WebP, or
+       (b) replace it with a PlayCanvas Element (text, image) for UI,
+     never with runtime-built buffers.
+
+0.5  Memory safety: PlayCanvas owns asset GPU lifetime. Scripts must NEVER
+     call material.destroy() or model.destroy() on shared assets. Use
+     `entity.destroy()` only on entities the script itself instantiated
+     from a Template.
+
+0.6  No pixel-ratio surprises: configure quality through a single
+     `quality-controller.js` script attached to Root, exposing LOW/MED/HIGH
+     attributes. Renderer-level toggles go through pc.app.graphicsDevice
+     and pc.app.scene settings, not pc.app.renderer.
+
+--------------------------------------------------------------------------------
+1. PROJECT / REPO LAYOUT
+--------------------------------------------------------------------------------
+The PlayCanvas project lives in a NEW repo (or new folder), not as a Vite
+build. Suggested layout when checked into source control:
+
+  helix-descent-pc/
+    .vscode/
+      settings.json                <- PC extension config (project id, key)
+    scripts/                        <- synced with Editor via PC extension
+      core/
+        game-state.js
+        game-loop.js
+        balance.js
+        math-utils.js
+      world/
+        world-rotator.js
+        platform-spawner.js
+        platform-controller.js
+        spatial-index.js
+      player/
+        ball-physics.js
+        player-input.js
+        shooting.js
+        combat.js
+        combo.js
+        camera-shake.js
+      entities/
+        bullet.js
+        enemy-bat.js
+        enemy-worm.js
+        enemy-pillar-worm.js
+        enemy-turtle.js
+        enemy-jellyfish.js
+        enemy-puffer.js
+        enemy-porcupine.js
+        enemy-spiked-ball.js
+        enemy-acid-snail.js
+        crate.js
+        gold-block.js
+        coin-pickup.js
+        bounce-cube.js
+        cannon.js
+        saw-blade.js
+        pillar-laser-ring.js
+        pillar-spike.js
+        spike-trap.js
+        floater.js
+        acid-puddle.js
+        shockwave.js
+        floating-text.js
+      systems/
+        audio-manager.js
+        ui-manager.js
+        shop-manager.js
+        level-complete-manager.js
+        pause-manager.js
+        leaderboard.js              <- Firebase, NOT JSONBin
+        ar-mode.js
+        pool-manager.js
+        quality-controller.js
+      shared/
+        types.d.ts                  <- only if using TS
+    docs/
+      hierarchy.txt                 <- export of Editor tree as reference
+      asset-list.csv                <- SSOT for required art / audio
+      port-progress.md
+    README.md
+
+The Editor project itself is hosted on PlayCanvas; we only check the
+scripts and asset manifests into git via the PC extension. This is the
+intended workflow for the extension.
+
+--------------------------------------------------------------------------------
+2. EDITOR HIERARCHY (target tree)
+--------------------------------------------------------------------------------
+Build this in the PC Editor, top-down. Indentation = parent/child.
+
+Root (entity: "Game")                                [scripts: game-loop,
+                                                                game-state,
+                                                                balance,
+                                                                quality-controller,
+                                                                pool-manager]
+  Camera (entity, type: camera)                      [scripts: camera-shake]
+  Lights
+    Hemisphere (entity, type: light, light: ambient/hemisphere via shader)
+    Sun       (entity, type: light, light: directional, castShadows toggleable)
+  World        (transform-only container)            [scripts: world-rotator]
+    Pillar     (entity, type: render, model: pillar.glb)
+    Platforms  (transform-only)                      [scripts: platform-spawner,
+                                                               spatial-index]
+    PillarSpikes        (transform-only)
+    SawBlades           (transform-only)
+    PillarLaserRings    (transform-only)
+    Floaters            (transform-only)
+    BounceCubesPool     (transform-only, holds inactive cubes)
+    AcidPuddlesPool     (transform-only)
+  Player
+    Ball                (entity, render, ball.glb)   [scripts: ball-physics,
+                                                               player-input,
+                                                               shooting,
+                                                               combat,
+                                                               combo]
+    Shield              (entity, render, shield.glb, enabled=false)
+  Bullets               (transform-only, runtime-only children)
+  Enemies               (transform-only, runtime-only children)
+  Particles             (transform-only)
+  Cannons               (transform-only)
+  AcidDroplets          (transform-only)
+  ARRoot                (transform-only, enabled=false)  [scripts: ar-mode]
+    ARTowerRotator
+  UI (entity, screen component, ScreenSpace)         [scripts: ui-manager,
+                                                               shop-manager,
+                                                               level-complete-manager,
+                                                               pause-manager,
+                                                               leaderboard]
+    TopStats / Hearts
+    TopStats / Coins
+    Score
+    LevelProgress / Label / Track / Fill
+    AmmoUI / Label / WeaponIndicator / Magazine
+    Hint
+    PauseButton, PausePanel/...
+    ExtraPanel/...
+    ShopPanel/...
+    LevelCompletePanel/...
+    GameOverPanel/...
+    LeaderboardPanel/...
+    VersionLabel
+    ArModeButton, ArStatus
+
+Notes for the Editor builder:
+  - Use Element components (text + image) for the UI overlays. Keep the
+    panels as Element groups under the Screen, not as DOM. Keeps everything
+    in PlayCanvas.
+  - Leave Templates instances OUT of the Game tree at runtime. Templates
+    live in the Asset Registry only; spawners instantiate copies.
+  - Tag entities with pc.Tags so scripts can query (e.g. tag "platform",
+    "enemy", "bullet", "saw-blade", "cannon"). Tags replace many of the
+    `for (const x of arrayName)` loops.
+
+--------------------------------------------------------------------------------
+3. RENDER LAYERS
+--------------------------------------------------------------------------------
+Create these layers in the Editor (Settings > Layers):
+
+  WorldOpaque          - default world geometry
+  WorldTransparent     - jellyfish, acid puddles, laser rings, shield
+  Sprites              - combo sprite, floating text (depth tested off)
+  Shockwave            - shockwave additive blend
+  Sky                  - background gradient (use a clear color instead)
+  UI                   - Screen-space ScreenComponent
+  ARLayer             - only used while AR is active
+
+Camera entity layer list (in this draw order):
+  WorldOpaque, WorldTransparent, Shockwave, Sprites, UI
+
+ARLayer is enabled by ar-mode.js when AR starts.
+
+--------------------------------------------------------------------------------
+4. ASSET CATALOGUE
+--------------------------------------------------------------------------------
+All assets are imported in the Editor's Asset Registry. Naming convention:
+  audio/<role>.mp3   model/<role>.glb   tex/<role>.webp   mat/<role>
+  template/<role>    font/<role>.ttf
+
+4.1 AUDIO (MP3, mono, 44.1kHz, ~96 kbps)
+    bounce.mp3              <- replaces playBounceSound oscillator
+    fail.mp3                <- replaces playFailSound
+    shoot.mp3               <- replaces playShootSound
+    empty_ammo.mp3          <- replaces playEmptyAmmoSound
+    reload.mp3              <- replaces playReloadSound
+    bat_death.mp3           <- replaces playBatDeathSound
+    cannon_activate.mp3
+    cannon_fire.mp3
+    reward.mp3
+    coin_collect.mp3        <- replaces playCoinCubeCollectSound
+    glass_break.mp3
+    puffer_explosion.mp3
+    metallic_blip.mp3
+    acid_burn.mp3
+    invuln_loop.mp3         <- replaces oscillator-based loop;
+                               imported with loop=true on its slot
+    Optional: ambient_idle.mp3  (low-volume tower hum loop)
+
+4.2 MODELS (GLB, all units in meters, +Y up, real-world scale to match the
+    constants in src/core/constants.js)
+    Static / scenery:
+      pillar.glb
+      ledge.glb
+      shop_sign.glb           <- replaces canvas-text shop sign
+      platform_tile.glb       <- ONE arc-shaped tile geometry, oriented
+                                 along +X. Spawners place 8-16 instances
+                                 around the pillar, rotated about Y. The
+                                 Editor exposes 6 material variants:
+                                   mat_tile_blue, mat_tile_gray,
+                                   mat_tile_red, mat_tile_cracked_blue,
+                                   mat_tile_finish, mat_tile_shop
+                                 (variant selected per instance at runtime)
+      tile_crack_overlay.glb  <- crack lines as a decal mesh; placed on top
+                                 of cracked-blue and gray tiles. Multiple
+                                 stages: stage1, stage2 sub-meshes.
+    Player / weapons:
+      ball.glb
+      shield.glb
+      bullet.glb
+    Enemies:
+      bat.glb (with skeleton / wing bones; flap via animation OR via
+              child-entity rotations -- see 7.6)
+      worm.glb (multi-segment skinned, OR a head + 3 segment children)
+      pillar_worm.glb
+      turtle.glb
+      jellyfish.glb (semi-transparent material)
+      puffer.glb
+      porcupine.glb
+      porcupine_spike.glb     <- single spike, repeated
+      acid_snail.glb (body + shell as separate sub-meshes for
+                     "shell cracked" swap)
+      acid_snail_shell_cracked.glb (alt material)
+      spiked_ball.glb
+    Hazards / world:
+      saw_blade.glb           <- replaces ExtrudeGeometry
+      pillar_spike.glb        <- ledge + spike combo
+      platform_spike.glb      <- single red spike
+      spike_hole.glb          <- the dark hole the spike rises from
+      cannon.glb (base + mouth + ring + laser as sub-entities or
+                  child entities so we can toggle visibility)
+      pillar_laser_ring.glb   <- thin torus
+      floater_disc.glb
+      acid_puddle.glb         <- flat disc, 2 size variants
+      acid_droplet.glb        <- small sphere
+      shockwave.glb           <- single sphere; use additive material
+    Pickups / drops:
+      crate.glb
+      gold_block.glb
+      coin.glb                <- replaces coinPickupGeometry
+      bounce_cube.glb
+
+4.3 TEXTURES (WebP, sRGB color textures, lossless or quality 90 for art)
+    UI:
+      ui_heart_full.webp, ui_heart_empty.webp
+      ui_coin_icon.webp
+      ui_panel_bg.webp
+      ui_button_*.webp (variants for normal/hover/active)
+      ui_progress_track.webp, ui_progress_fill.webp
+      ui_ammo_segment.webp (filled/empty pair)
+    In-world:
+      shop_sign_decal.webp
+      gold_sparkle.webp
+      bullet_trail.webp
+      shockwave_noise.webp
+      acid_surface.webp
+      tile_blue.webp, tile_gray.webp, tile_red.webp, tile_cracked.webp,
+        tile_finish.webp, tile_shop.webp (used by the tile materials;
+        single tile mesh re-skinned per type)
+      ball_albedo.webp, ball_normal.webp (optional)
+    Sprite atlases:
+      atlas_floating_text.webp (pre-rendered: "Reload", "Combo Loss",
+        "NO HIT", "SHIELD", "VAMP +1", "COMBO SHIELD", + 0-9 digits for
+        combo count)
+      atlas_combo_digits.webp (separate, larger)
+
+4.4 FONTS
+    inter.ttf (only if using Element text components instead of atlases)
+
+4.5 MATERIALS (Editor assets; not files)
+    mat_tile_*: StandardMaterial, diffuse from tex/tile_*.webp,
+      one shared instance per tile type. Tile flash is handled by SWAPPING
+      the meshInstance.material between mat_tile_<type> and
+      mat_tile_<type>_flash. Flash variant is identical except diffuse +
+      emissive boost.
+    mat_pillar, mat_ledge, mat_crate, mat_gold_block (with metallic),
+    mat_bullet (emissive yellow), mat_ball,
+    mat_bat_body, mat_bat_wing, mat_spike, mat_worm, mat_worm_head,
+    mat_turtle_body, mat_turtle_shell, mat_jellyfish (transparent),
+    mat_puffer, mat_porcupine, mat_porcupine_spike,
+    mat_acid_snail_body, mat_acid_snail_shell, mat_acid_snail_shell_cracked,
+    mat_acid_puddle (transparent doubleSided), mat_acid_droplet,
+    mat_shockwave (additive, transparent),
+    mat_pillar_laser_ring (transparent),
+    mat_cannon, mat_cannon_warning, mat_cannon_laser, mat_shield (emissive)
+
+  Quality presets adjust shader complexity:
+    LOW   -> all materials use Lambert (diffuse-only) preset where allowed
+    MED   -> Phong / Standard with shadows OFF on small props
+    HIGH  -> Standard PBR, shadows ON, ball uses metallic
+
+--------------------------------------------------------------------------------
+5. TEMPLATES (PREFABS)
+--------------------------------------------------------------------------------
+Build these in the Editor (right-click entity -> New Template). Save under
+asset path "template/<name>". Spawners reference them by name OR by asset
+id loaded from a script attribute.
+
+  template/Tile_Blue, _Gray, _Red, _CrackedBlue, _Finish, _Shop
+  template/SpikeTrap (group: 3 spike entities, parented under platform)
+  template/Crate
+  template/GoldBlock
+  template/Coin
+  template/BounceCube
+  template/PillarSpike
+  template/Floater
+  template/SawBlade
+  template/PillarLaserRing
+  template/Cannon
+  template/AcidPuddle, template/AcidDroplet
+  template/Shockwave
+  template/Bullet
+  template/Particle (a single small sphere, used by all explosions and
+                     emitter scripts. Color is set at instantiate time on
+                     a per-instance material clone.)
+  template/Bat, template/SpikedBall, template/Worm, template/PillarWorm,
+  template/Turtle, template/Jellyfish, template/JellyfishSmall (split form),
+  template/PufferBomb, template/Porcupine, template/AcidSnail
+  template/FloatingText (Element with image + text or atlas-backed sprite)
+
+Spawner pattern (consistent across all spawners):
+  const tpl = this.app.assets.get(this.tileBlueTemplateId);
+  const inst = tpl.resource.instantiate();
+  parent.addChild(inst);
+  inst.setLocalPosition(...);
+Template assets are wired in via script attributes (type:'asset',
+assetType:'template'). Editor user assigns the templates per-spawner.
+
+--------------------------------------------------------------------------------
+6. SCRIPT CATALOG (one section per script)
+--------------------------------------------------------------------------------
+Each entry: file -> attached entity -> attributes (Editor inputs) ->
+public methods -> ports of which Three.js function(s).
+
+6.1 core/game-state.js (singleton)
+  Attached to: Root ("Game")
+  Attributes: none (state is internal). Exposes pc.events on this.app:
+    'state:hpChanged', 'state:coinsChanged', 'state:scoreChanged',
+    'state:levelChanged', 'state:gameOver', 'state:levelComplete', etc.
+  Holds runtime state: hp, coins, score, level, ammo, isPaused, isGameOver,
+    isLevelComplete, impulseMode, controlMode, twistBMode, timeScale,
+    damageSlowdownTimer, invulnerabilityTimer, hasShield,
+    piercingBulletsUnlocked, vampiricLifeUnlocked, comboShieldUnlocked,
+    pendingInvulnerability, pendingShield, shopUsed, etc.
+  Replaces: src/core/state.js + every top-level `let` in src/main.js.
+  Other scripts read via `this.app.gameState.X` or via fired events.
+
+6.2 core/game-loop.js
+  Attached to: Root
+  Attributes: none.
+  Method: update(dt)
+    Runs the same orchestration order as main.js animate() (lines 5137-5215):
+      damageSlowdownTimer decay, scaledTime accumulation,
+      world rotation lerp,
+      shooting -> powerups -> ball physics -> collision queries
+      -> spike traps -> pillar spikes -> saw blades -> laser rings
+      -> bullets -> enemies -> floaters -> acid puddles -> shockwaves
+      -> cannons -> gold blocks -> falling crates/gold -> coin pickups
+      -> particles -> bounce cubes -> recycle platforms -> floating texts
+      -> tile flashes -> camera.
+    Calls into the relevant systems by direct app.X references rather than
+    relying on PC's per-script update order.
+
+  Why centralized: the original code depends on a strict order. Per-script
+  update() in PC runs in registration order, which is brittle. Have one
+  authoritative orchestrator.
+
+6.3 core/balance.js
+  Attached to: Root
+  Attributes: maxHp, invulnerabilityCost, shieldCost, piercingCost,
+    vampiricCost, comboShieldCost, comboShieldThreshold, goldBlocksPerLevel,
+    sawBladesPerLevel, defaultMaxAmmo, defaultFireInterval, ...
+  All numeric tunables exposed as Editor inspector inputs (replaces
+    src/core/constants.js + src/data/balance.js).
+
+6.4 core/math-utils.js
+  Pure module of helpers. Ports src/core/utils.js:
+    angleInArc(angle, start, end)
+    isBlueTile(type), isFlashableTile(type)
+    getAngularDistance(a, b)
+    angleAroundY(vec) -> Math.atan2(vec.z, vec.x)
+    radialDistance(vec) -> Math.hypot(vec.x, vec.z)
+    Scratch vec3 pool: getScratch3() / releaseScratch3() OR module-scope
+    statics akin to the _xxx vectors at main.js:3974-4003.
+    pc.Vec3 throughout -- never call new pc.Vec3() in hot paths.
+
+6.5 world/world-rotator.js
+  Attached to: World
+  Attributes: rotationLerp = 0.22, twistBMode = false (linked to balance)
+  Update: world.setLocalEulerAngles(0, currentY, 0) where currentY is
+    eased toward this.app.gameState.targetRotation.
+    Replaces main.js:5170 world.rotation.y lerp.
+
+6.6 world/platform-spawner.js
+  Attached to: World/Platforms
+  Attributes:
+    tileBlueTpl, tileGrayTpl, tileRedTpl, tileCrackedTpl, tileFinishTpl,
+    tileShopTpl, spikeTrapTpl, crateTpl, goldBlockTpl, cannonTpl,
+    sawBladeTpl, pillarLaserRingTpl, pillarSpikeTpl, floaterTpl,
+    coinPickupTpl, shopSignTpl, ledgeTpl, ...
+    streamMargin = 12 (platforms ahead-of-ball to keep spawned)
+    platformSpacing = 6.45
+    levelTargetFn = level*10+10
+  Public:
+    startLevel(levelIdx)
+    update(dt)              <- streams new platforms when ball descends
+    recycleAbove(yMax)
+    spawnGoldBlocksForLevel()
+    spawnPillarSpikesForLevel()
+    spawnFloatersForLevel()
+    spawnSawBladesForLevel()
+    spawnPillarLaserRingsForLevel()
+  Streams instead of front-loading (fixes plan.txt issue B4). Uses
+  templates instantiated under Platforms/ container.
+
+6.7 world/platform-controller.js
+  Attached to: each Platform template root.
+  Attributes: difficulty, segmentCount, gapCount.
+  Builds tiles by instantiating tile templates as children, choosing the
+  variant per random rolls (port main.js:495-597). Holds tile data
+  records:
+    tile = { entity, index, start, end, type, broken, hitCount,
+             flashTimer, crackEntity }
+  Public:
+    flashTile(tile, dur)
+    breakTile(tile)
+    breakGrayTile(tile)
+    setGrayCrackStage(tile, stage)  <- swaps decal sub-mesh visibility
+    detachOverhead(tile)            <- detaches puddles, gold, etc.
+
+6.8 world/spatial-index.js
+  Attached to: World/Platforms (or Root, doesn't matter -- module-scope
+  Map keyed by band).
+  Methods: register(platform), unregister(platform),
+    getNear(yMin, yMax) -> Platform[] (ports main.js:4061-4092). EXPANDED to
+  also index acid puddles, gold blocks, spike traps so collision queries
+  don't full-scan (fixes plan.txt B8).
+
+6.9 player/ball-physics.js
+  Attached to: Player/Ball
+  Attributes: gravity, terminalVelocity, bounceVelocity, ballRadius,
+    impulseMode, etc. (Reads balance attrs.)
+  Update:
+    apply gravity, clamp by terminalVelocity,
+    move ball Y by velocityY*dt,
+    call collision queries on platforms (via spatial-index),
+    crates, gold blocks, cannons, sawblades, etc.
+    rotate ball.x slowly.
+  Replaces main.js:5177-5202 ball update + handlePlatformCollision +
+  handlePlatformUndersideCollision + checkBallCrateHit +
+  checkBallGoldBlockStomp.
+
+6.10 player/player-input.js
+  Attached to: Player/Ball
+  Attributes: dragSensitivity = 0.012, controlMode 'A'|'B'.
+  Listens via pc.app.mouse / pc.app.touch / pc.app.keyboard:
+    pointerdown/move/up -> drag.targetRotation
+    keydown 1/2 -> selectWeapon
+    keydown space -> startShooting (control mode B)
+    keydown P -> setPaused
+  Ports systems/input.js exactly. Use pc.events for cross-script signals
+  ("input:fireStart", "input:fireStop", "input:dragRotate(dx)").
+
+6.11 player/shooting.js
+  Attached to: Player/Ball
+  Attributes: maxAmmo, fireInterval, shotgunFireInterval,
+    shotgunSpreadAngle, bulletImpulse, baseShotUpwardVelocityCap,
+    bulletTpl, shotgunImpulseMode B/C constants.
+  Public:
+    fireMachinegun(), fireShotgun(), fireCurrent(),
+    startShooting(), stopShooting(),
+    selectWeapon('machinegun'|'shotgun'),
+    reloadAmmo()
+  Bullets are instantiated from bulletTpl, parented under Bullets/. Each
+  bullet entity has bullet.js attached.
+  Replaces main.js:2028-2169 + 2103-2125.
+
+6.12 player/combat.js
+  Attached to: Player/Ball
+  Attributes: hp, maxHp (default 5), shieldEntity (entity ref).
+  Public:
+    applyDamage()           <- ports main.js:3763-3791
+    activatePendingPowerups()
+    grantInvuln(seconds), grantShield()
+    triggerShake(intensity)  <- forwards to camera-shake
+    onEnemyKilled(enemy)     <- vampiric, combo logic
+  Listens to: 'enemy:died', 'platform:redLanded', 'cannon:beam',
+    'spike:hit', 'sawblade:hit', 'acidpuddle:burn', 'enemy:bodyContact'
+  Emits: 'damage:applied', 'shield:broken', 'player:dead'
+  Replaces all the applyDamage + invuln + shield code in main.js.
+
+6.13 player/combo.js
+  Attached to: Player/Ball
+  Attributes: comboSpriteTpl (template Element child).
+  Public:
+    increase(), reset(showLoss=true)
+  Spawns and updates a single FloatingText entity for the combo number
+  by setting Element text or atlas frame. Avoids per-frame canvas re-render.
+  Replaces main.js:1760-1820.
+
+6.14 player/camera-shake.js
+  Attached to: Camera
+  Attributes: shakeDecayRate, baseFollowLerp.
+  Update:
+    smooth follow ball.y - 4.2,
+    apply shake offset,
+    move pillar visual position (or pillar has its own follow script).
+  Replaces main.js:4291-4313.
+
+6.15 entities/bullet.js
+  Attached to: every Bullet template root.
+  Attributes: speed, lifetime, isPiercing, shotgunShotId, hitEnemiesSet
+    (runtime).
+  Update:
+    move along stored velocity,
+    scale.setScalar by life ratio,
+    query enemies via app.world.enemies (or Tag query), platforms via
+      spatial-index, crates, gold blocks, cannons,
+    on hit, fire 'bullet:hit' event with hit position, then entity.destroy()
+    unless piercing.
+  Replaces main.js:2126-2169 + checkBulletXxx helpers.
+
+6.16 entities/enemy-bat.js
+  Attached to: each Bat template instance.
+  Attributes: speed, arcSpan, direction, flapOffset, collisionRadius.
+  Update:
+    swing along arc, flap wings (rotate child entities by Math.sin),
+    test ball-contact via combat events.
+  Replaces createBat, the bat branch of updateEnemies / getBallEnemyContact.
+
+6.17 entities/enemy-worm.js, enemy-pillar-worm.js, enemy-turtle.js,
+     enemy-jellyfish.js, enemy-puffer.js, enemy-porcupine.js,
+     enemy-spiked-ball.js, enemy-acid-snail.js
+  Same shape as bat. Each ports its branch from updateEnemies (3194-3354)
+  and its create*() function. The state machines for porcupine
+  (walk/spikes), acid-snail (shell intact/cracked), and puffer
+  (split-on-death) are local to their script.
+
+6.18 entities/saw-blade.js
+  Update: Y+=speed*dt, rotation about Z, sphere-distance damage check.
+  Replaces main.js:1590-1612 + updateSawBlades.
+
+6.19 entities/pillar-laser-ring.js
+  Update: ring.timer % cycle for visibility/opacity, vertical+radial
+  damage check.
+  Replaces main.js:1624-1631 + updatePillarLaserRings.
+
+6.20 entities/pillar-spike.js, spike-trap.js
+  spike-trap.js owns 3 spike entities, runs the up/down cycle
+  (getSpikeRaiseAmount port). Position colliders, distance check.
+  Replaces main.js:443-485 + updateSpikeTraps.
+
+6.21 entities/floater.js
+  Update: passive; ball-physics queries floaters for stomp during its own
+  Y-cross test. Floater listens for 'floater:consumed' and self-destroys.
+  Replaces main.js:715-741 + updateFloaters.
+
+6.22 entities/gold-block.js, crate.js
+  Per-instance flash, hp, falling state. Detached from platform on tile
+  break.
+  Replaces main.js:599-682 + 2477-2504 + 2796-2833 + updateGoldBlocks.
+
+6.23 entities/coin-pickup.js
+  Spin + collect distance check + UI fly-to-coin animation (UI side
+  handled by ui-manager).
+  Replaces main.js:2529-2567.
+
+6.24 entities/bounce-cube.js
+  Ported pool. Implementation choice:
+    Option A (simple): one entity per cube template instance, pool of 32
+      kept under World/BounceCubesPool with enabled=false; activate on
+      spawn.
+    Option B (instanced): one InstancedMesh-equivalent (PlayCanvas
+      meshInstance.instancingData) holding all cubes. Faster on low-end.
+      Recommended for B11 win from plan.txt. Implementation: keep one
+      Render component on a master entity; control per-instance transform
+      via a Float32Array fed into pc.GraphicsDevice. This is more advanced
+      but matches the InstancedMesh recommendation.
+  Replaces main.js:2210-2475.
+
+6.25 entities/cannon.js
+  State machine (idle / charging / firing-laser / cooldown), line-of-sight
+  scan against platforms (uses spatial-index, narrow Y range), warning
+  ring scale by chargeProgress, laser visibility while firing.
+  Replaces main.js:1193-1251 + updateCannons.
+
+6.26 entities/shockwave.js
+  Linear scale lerp + opacity fade + per-frame enemy and player damage
+  checks. Self-destroys on life<=0.
+  Replaces main.js:2726-2734 + updateShockwaves.
+
+6.27 entities/acid-puddle.js
+  Two modes: stationary (on platform) vs falling droplet. Emits acid
+  particles every 0.05s via particle factory (pool, NOT new material).
+  Self-destroys on age >= fullLife + shrinkLife OR when Y goes out of
+  bounds (fixes A5 in plan.txt).
+  Replaces main.js:935-1163.
+
+6.28 entities/floating-text.js
+  Attached to: each FloatingText template instance.
+  Attributes: textKey (string from atlas: 'reload','combo_loss',...),
+    duration = 1, followBall = false, color = white.
+  Update: rises, fades, self-destroys on life<=0. Uses Element with image
+  region pointing into atlas_floating_text.webp (no canvas at runtime).
+
+6.29 systems/audio-manager.js
+  Attached to: Root (or a dedicated Audio entity).
+  Attributes: list of sound asset references (one per role).
+  Public:
+    play('bounce'), play('fail'), ..., startInvulnLoop(), stopInvulnLoop()
+  Implementation: a SoundComponent is added on the Audio entity with one
+  slot per asset; play() calls slot.play(). For polyphony, attach a small
+  SoundInstance pool per role (PC supports overlapping with .play() if
+  the slot is auto-restarted).
+  Replaces all of src/systems/audio.js. The procedural oscillator code is
+  deleted.
+
+6.30 systems/ui-manager.js
+  Attached to: UI entity.
+  Attributes: heartsRoot, coinsLabel, scoreLabel, levelLabel, progressFill,
+    progressLabel, ammoMagazine, weaponIndicator, coinPickupAnimRoot.
+  Subscribes to: state events ('state:hpChanged', 'state:coinsChanged', ...)
+  Methods:
+    rebuildAmmoUI(maxAmmo)   <- adds ammo segment Elements
+    updateAmmoUI()
+    showFloatingCoin(worldPos, value)  <- spawns a UI Element that animates
+                                          from worldPos screen projection
+                                          to coins label
+  Replaces src/systems/ui.js + main.js:1719-1734 + 1972-1989 + 1992-1996.
+
+6.31 systems/shop-manager.js
+  Drives ShopPanel UI; reads Balance attrs for costs; modifies state.
+  Replaces main.js:2999-3855 buyShop*().
+
+6.32 systems/level-complete-manager.js
+  Drives LevelCompletePanel; handles reward selection and powerup
+  buys-pending. Replaces main.js:3946-3972 + the level-complete UI binds
+  near 4957-5005.
+
+6.33 systems/pause-manager.js
+  Drives PausePanel; mirrors current Editor inspector inputs (impulse,
+  fire interval, gravity, ...). Each input writes back into the Balance
+  script (not into game-loop state directly). Replaces the dozens of
+  setX() functions + input event handlers in main.js:1822-1945,
+  4868-4939, 5003-5105.
+
+6.34 systems/leaderboard.js
+  REPLACES JSONBin (security bug A2 in plan.txt).
+  Implementation: Firebase (already a project dependency). Use Firestore
+  or RTDB with per-write rules limiting fields and enforcing ordering.
+  Methods: submitScore(name, score), fetchTop(20), getRank(name, score).
+  UI bound by leaderboard panel events.
+
+6.35 systems/ar-mode.js
+  Attached to: ARRoot (and listens via app.xr).
+  Implementation: PlayCanvas ships with built-in WebXR (pc.app.xr.start,
+  pc.app.xr.hitTest). The AR mode rebuilds a small tower under
+  ARRoot/ARTowerRotator using the same templates as the desktop mode.
+  Controllers: pc.XrInputSource API replaces the renderer.xr.getController
+  calls. Hit-test for placement uses pc.XrHitTest.
+  Replaces main.js:4338-4819.
+
+6.36 systems/pool-manager.js
+  Generic template pool. API:
+    pool.acquire(templateId, parent) -> entity (re-enables and resets)
+    pool.release(entity, templateId) -> stash back, disable, reset
+  Used by: bullets, particles, bounce cubes, floating texts, acid
+  particles. Single source of truth eliminates the ad-hoc pools.
+
+6.37 systems/quality-controller.js
+  Attached to: Root.
+  Attributes: preset = 'auto'|'low'|'med'|'high'.
+  On enable:
+    auto: heuristic from navigator.deviceMemory, hardwareConcurrency, DPR.
+    Apply: pc.app.graphicsDevice.maxPixelRatio,
+           camera.clearColor / fog,
+           shadows: scene.layers.Sun.enabled / sun.castShadows,
+           replace materials with Lambert variants on LOW (preassigned
+             pairs in Editor: mat_X / mat_X_low),
+           segment-count GLBs may have LOD versions: glb_X_lod1 used on
+             LOW (Editor sets it via the entity's render asset swap).
+  Replaces plan.txt B5/B6/B7.
+
+--------------------------------------------------------------------------------
+7. UPDATE ORDER (per frame, owned by game-loop.js)
+--------------------------------------------------------------------------------
+const dt = clamp(realDt, 0, 0.033) * timeScale;
+this.app.gameState.scaledTime += dt;
+
+if (paused) {
+  // still update camera-shake and UI? Keep pause cosmetic only.
+  return;
+}
+
+worldRotator.tick(dt);
+
+if (!gameOver && !levelComplete) {
+  shooting.tick(dt);
+  combat.tickPowerups(dt);
+  ballPhysics.tick(dt);          // moves ball, runs platform/crate/gold/
+                                  // cannon/saw collisions internally
+  spikeTraps.tickAll(dt);
+  pillarSpikes.tickAll(dt);
+  sawBlades.tickAll(dt);
+  pillarLaserRings.tickAll(dt);
+  bullets.tickAll(dt);
+  enemies.tickAll(dt);
+  floaters.tickAll(dt);
+  acidPuddles.tickAll(dt);
+  shockwaves.tickAll(dt);
+  cannons.tickAll(dt);
+  goldBlocks.tickAll(dt);
+  fallingDrops.tickAll(dt);
+  coinPickups.tickAll(dt);
+  particles.tickAll(dt);
+  bounceCubes.tickAll(dt);
+  platformSpawner.recycle(ball.position.y);
+  floatingTexts.tickAll(dt);
+  combo.tick();
+  tileFlashes.tick(dt);          // iterates a Set, not all tiles
+}
+
+cameraShake.tick(realDt);        // unscaled
+ballVisual.tick(realDt);
+
+PlayCanvas's automatic per-script update is left unused (or prefixed with
+guards) so this single pipeline owns ordering. To prevent double-tick:
+each entity script's `update()` early-returns unless `app.gameLoop.tickedManually`
+is false. Keep one channel, not two.
+
+--------------------------------------------------------------------------------
+8. STATE & DATA FLOW
+--------------------------------------------------------------------------------
+Single source: `app.gameState` (game-state.js).
+
+Listens via pc.events:
+  'state:hpChanged'        emitted by combat.js;          ui-manager renders hearts
+  'state:coinsChanged'     emitted by combat.js / pickups; ui-manager + shop refresh
+  'state:scoreChanged'     emitted by anywhere;            ui-manager refresh
+  'state:levelChanged'     emitted by level-complete-mgr;  spawner restarts
+  'state:ammoChanged'      emitted by shooting.js;         ui-manager refresh
+  'state:weaponChanged'    emitted by shooting.js;         ui-manager refresh
+  'state:gameOver'         emitted by combat.js;           leaderboard opens
+  'state:levelComplete'    emitted by ball-physics.js;     level-complete-mgr opens
+  'input:dragRotate'       emitted by player-input.js;     world-rotator consumes
+  'input:fireStart/Stop'   emitted by player-input.js;     shooting consumes
+  'enemy:killed'           emitted by enemy-* / bullet;    combat (combo, vamp)
+  'platform:tileBroken'    emitted by platform-controller; spawner stats / acid
+  'audio:play'             emitted by anything;            audio-manager
+
+This decouples scripts: an enemy doesn't import combat.js, it just emits
+'enemy:killed' and combat listens.
+
+--------------------------------------------------------------------------------
+9. MATH-PHYSICS PORT (what to translate, line-by-line targets)
+--------------------------------------------------------------------------------
+Translation cheat-sheet (Three -> PlayCanvas):
+  THREE.Vector3            -> pc.Vec3
+  THREE.MathUtils.clamp    -> pc.math.clamp
+  THREE.MathUtils.lerp     -> pc.math.lerp
+  THREE.MathUtils.degToRad -> n * pc.math.DEG_TO_RAD
+  vec.distanceToSquared(o) -> vec.distance(o) ** 2  (PC has only distance;
+                              keep your own distSq via dx*dx+dy*dy+dz*dz)
+  mesh.position.copy(v)    -> entity.setLocalPosition(v.x,v.y,v.z) or
+                              entity.setPosition(v) for world
+  mesh.getWorldPosition(t) -> entity.getPosition() (returns shared vec --
+                              copy if you need to mutate)
+  group.localToWorld(v)    -> group.getWorldTransform().transformPoint(v, v)
+  group.worldToLocal(v)    -> mtxInv.transformPoint(v, v)  -- precompute
+                              inverse from getWorldTransform()
+  scene.add(mesh)          -> parent.addChild(entity)
+  mesh.removeFromParent()  -> entity.parent.removeChild(entity) or
+                              entity.destroy()
+
+Algorithms to port unchanged:
+  Ball Y integration + terminal velocity
+  Plane-cross detection (previousY, currentY vs platformTop)
+  Sphere-sphere distSq (enemy contacts, gold blocks, sawblades, cannons)
+  Arc containment (angleInArc)
+  Tile color flash lerp
+  Spike raise piecewise function (getSpikeRaiseAmount)
+  Cannon line-of-sight (narrow Y band + tile lookup)
+  Bounce cube tangential motion in radial coords
+  Shotgun spread tangent calculation
+  Saw blade radial Y advance
+
+DO NOT add pc.RigidBodyComponent. DO NOT add pc.CollisionComponent.
+DO NOT call app.systems.physics.<anything>. The physics namespace is
+unused.
+
+Scratch vectors: declare module-statics in math-utils.js (pc.Vec3
+instances) and reuse, mirroring main.js:3974-4003.
+
+--------------------------------------------------------------------------------
+10. INPUT MAPPING
+--------------------------------------------------------------------------------
+PlayCanvas input system:
+  Mouse  : this.app.mouse.on(pc.EVENT_MOUSEDOWN, ...)
+  Touch  : this.app.touch.on(pc.EVENT_TOUCHSTART, ...)
+  Keyboard: this.app.keyboard.on(pc.EVENT_KEYDOWN, ...)
+We can also bind directly to canvas via DOM if preferred (the input-port
+is a thin wrapper -- the source already uses native pointer events).
+
+Recommended: pointer events on the canvas element via pc.app.graphicsDevice
+.canvas.addEventListener. This keeps multitouch handling identical to the
+source (Control Mode B's touchPointerIds set survives untouched).
+
+--------------------------------------------------------------------------------
+11. UI PORT (Element vs HTML)
+--------------------------------------------------------------------------------
+Decision: use PlayCanvas Element components for the in-game HUD and panels.
+Reasons:
+  - Text/image rendering integrates with the render order.
+  - Touch hits routed through PC's input system.
+  - Avoids two parallel event pipelines (canvas + DOM).
+Exception: leaderboard panel may use a small DOM overlay because it needs
+a text input field; PlayCanvas Element doesn't ship a focused text-input
+widget. Use a single div over the canvas for the name input only.
+
+Sprite atlases:
+  atlas_floating_text.webp drives floating-text.js.
+  atlas_combo_digits.webp drives combo.js (assemble multi-digit combos by
+    placing digit Elements left-to-right under a parent Element).
+
+--------------------------------------------------------------------------------
+12. AUDIO PORT
+--------------------------------------------------------------------------------
+Route every play* call through audio-manager.js.
+
+Implementation:
+  AudioEntity has a SoundComponent with ~16 slots (one per role). Each slot
+  has its asset, loop=false except invuln_loop=true, overlap=true so
+  rapid-fire shoots don't truncate.
+
+  audioManager.play(role) does:
+    const slot = this.entity.sound.slot(role);
+    if (slot) slot.play();
+  audioManager.startInvulnLoop():
+    const s = this.entity.sound.slot('invuln_loop');
+    if (s && !s.isPlaying) s.play();
+  audioManager.stopInvulnLoop():
+    fade gain via slot.volume animation, then s.stop().
+
+The procedural oscillators in src/systems/audio.js are deleted entirely.
+
+--------------------------------------------------------------------------------
+13. AR MODE PORT
+--------------------------------------------------------------------------------
+PlayCanvas WebXR API replaces renderer.xr.* one-to-one.
+
+Setup:
+  this.app.xr.start(camera.camera, pc.XRTYPE_AR,
+    pc.XRSPACE_LOCALFLOOR, {
+      domOverlay: { root: document.body },
+      hitTestEnabled: true,
+    });
+  this.app.xr.hitTest.start({ spaceType: pc.XRSPACE_VIEWER, callback: ... });
+
+Controllers:
+  this.app.xr.input.on('add', (inputSource) => { ... });
+  inputSource.on('select', ...) for trigger.
+  inputSource.on('squeeze', ...) for grip.
+
+ARRoot scale + rotation is driven by ar-mode.js as in the source. The two
+controllers' world positions feed scale-on-grip-distance like before.
+arGripControllers becomes a Set<pc.XrInputSource>.
+
+The AR tower reuses the same Templates as desktop. Lower platform count
+and lower fidelity materials applied when AR session starts (LOW preset
+forced).
+
+--------------------------------------------------------------------------------
+14. SECURITY / NETWORK
+--------------------------------------------------------------------------------
+14.1 Drop JSONBin entirely. The current write key in main.js:39 must NOT
+     be ported. Rotate it before any code is shared.
+14.2 Stand up Firebase project (already in deps). Use:
+       leaderboard collection: scores
+       fields: name (string, max 12 chars), score (int), timestamp (server)
+     Security rule: name pattern ^[A-Z0-9 ]{1,12}$, score must be number,
+     submission rate-limited via App Check or anonymous auth tokens.
+14.3 leaderboard.js submits via Firebase SDK (no shared bin), reads top 20
+     ordered by score desc.
+
+--------------------------------------------------------------------------------
+15. PHASED MIGRATION
+--------------------------------------------------------------------------------
+Phase P1 -- Editor scaffolding (Editor only, no scripts running)
+  - Build the entity hierarchy in Section 2.
+  - Import a placeholder GLB and WebP so the scene renders something.
+  - Configure layers, camera, lights.
+  - Verify build runs in PlayCanvas Launcher with an empty scene + camera.
+
+Phase P2 -- Asset import (content-only)
+  - Import every audio/model/texture/font listed in Section 4.
+  - Author the materials in Section 4.5.
+  - Author the templates in Section 5 (start with Tile, Bullet, Bat, Crate,
+    Coin -- enough to play a smoke-test loop).
+
+Phase P3 -- Core loop bring-up (smallest playable port)
+  - balance.js, math-utils.js, game-state.js, game-loop.js
+  - quality-controller.js (auto detection only)
+  - world-rotator.js, camera-shake.js
+  - ball-physics.js with ONLY platform-collision (single hand-placed
+    platform in Editor for testing)
+  - player-input.js (drag rotate only)
+  - platform-spawner.js streaming a basic blue platform every spacing
+  - DELIVERABLE: ball falls, drag rotates the world, ball bounces on tiles.
+
+Phase P4 -- Combat & weapons
+  - shooting.js, bullet.js
+  - combat.js, combo.js
+  - HUD: ui-manager hearts/coins/score/ammo
+  - audio-manager.js with bounce/shoot/reload/empty
+  - DELIVERABLE: ball can shoot and reload, hearts deplete on damage, combo
+    increments on simulated kill event.
+
+Phase P5 -- Hazards
+  - spike-trap.js, pillar-spike.js, saw-blade.js, pillar-laser-ring.js
+  - cannon.js (with line-of-sight + laser)
+  - acid-puddle.js
+  - floater.js
+  - shockwave.js
+  - DELIVERABLE: full level 1 hazard set spawns and damages the player.
+
+Phase P6 -- Enemies
+  - All eight enemy scripts.
+  - spatial-index.js extended to gold blocks and acid puddles for perf.
+  - DELIVERABLE: enemies spawn per level, can be killed, drop bounce cubes.
+
+Phase P7 -- Pickups & economy
+  - bounce-cube.js (pool / instanced),
+  - crate.js, gold-block.js, coin-pickup.js,
+  - shop-manager.js, level-complete-manager.js,
+  - pause-manager.js (full options panel parity).
+
+Phase P8 -- Leaderboard & meta
+  - leaderboard.js on Firebase (NOT JSONBin).
+  - Game over flow, restart, persistence.
+
+Phase P9 -- AR mode
+  - ar-mode.js + AR templates.
+  - Verify on Quest 3 browser.
+
+Phase P10 -- Polish & quality presets
+  - LOW/HIGH parity, instanced bounce cubes, sprite atlases hooked,
+    sound polyphony, pause-frame skip.
+  - Carry over plan.txt phases 1-4 cleanups (already pre-paid by
+    architecture choices).
+
+--------------------------------------------------------------------------------
+16. DEFINITION OF DONE (port acceptance)
+--------------------------------------------------------------------------------
+- The ten enemy types behave identically to source (subjective playtest).
+- Hazards (sawblade, cannon, laser ring, spikes, acid puddle) deal same
+  damage on the same approach vectors.
+- Combo / shop / shield / invuln / piercing / vampiric / combo-shield all
+  work end-to-end.
+- AR mode places, scales, fires, and recycles.
+- 60 FPS on a Pixel 6a (LOW preset auto).
+- No procedural CanvasTexture / OscillatorNode / runtime BufferGeometry
+  remain in scripts/.
+- No pc.RigidBodyComponent / pc.CollisionComponent / Ammo references in
+  the project.
+- Leaderboard runs against Firebase with rules; no API keys with write
+  access bundled in client.
+
+--------------------------------------------------------------------------------
+17. RISKS & OPEN QUESTIONS
+--------------------------------------------------------------------------------
+R1  PC's per-script update order: solved by central game-loop.js but
+    requires discipline -- per-script update() must not duplicate work.
+
+R2  Templates instantiating with all child Element / Render assets cold
+    on first use can still hitch on mobile. Mitigation: at boot, instantiate
+    one of each template, parent under a hidden warmup entity, then destroy.
+    Triggers GPU upload + JIT before gameplay.
+
+R3  Sprite atlases require an authoring step. Provide a small Node script
+    that renders the strings to PNG, runs through cwebp; track in docs/.
+
+R4  PlayCanvas WebXR coverage on iOS Safari is limited; AR likely
+    Quest-only at parity. Acceptable.
+
+R5  No Ammo physics means the team must accept that "physics-feel" tweaks
+    are still code edits, not Editor knobs. Document the math constants on
+    balance.js for designer access.
+
+R6  Leaderboard requires a Firebase project + billing review (free tier
+    is fine for this scale). Spend 1h on rules/auth before going live.
+
+R7  GLB authoring overhead: ~30 props to model. Identify reusable atomic
+    shapes (single tile arc, single particle sphere) and fan out via
+    materials + transform.
+
+================================================================================
+APPENDIX A -- SOURCE-TO-SCRIPT MAP (quick reference)
+================================================================================
+src/main.js range                -> PlayCanvas script
+  85-97    (renderer init)        -> Editor camera + quality-controller.js
+  179-181  (world group)          -> Editor "World" entity
+  275-289  (pillar + ball)        -> Editor entities + ball-physics.js
+  291-368  (geometries/materials) -> deleted (Editor assets)
+  376-380  (lights)               -> Editor entities
+  382-386  (drag state)           -> game-state.js
+  388-394  (lane helpers)         -> math-utils.js
+  396-431  (crack lines)          -> tile_crack_overlay.glb sub-meshes
+  433-485  (spike trap procgen)   -> spike-trap.js + template
+  487-597  (createPlatform)       -> platform-controller.js + tile templates
+  599-610  (createCrate)          -> crate template + crate.js
+  611-682  (gold blocks)          -> gold-block.js + template
+  684-741  (pillar spikes/floaters) -> pillar-spike.js, floater.js
+  743-933  (enemy meshes)         -> GLBs + per-enemy script
+  935-1163 (acid puddles)         -> acid-puddle.js
+  1193-1251 (cannons)             -> cannon.js + cannon template
+  1300-1717 (enemy spawns)        -> platform-spawner.js + enemy scripts
+  1719-1738 (ammo UI)             -> ui-manager.js
+  1740-1758 (weapon select)       -> shooting.js
+  1760-1820 (combo)               -> combo.js
+  1822-1945 (option setters)      -> pause-manager.js + balance.js
+  1947-1996 (level UI)            -> ui-manager.js
+  1998-2104 (shooting)            -> shooting.js
+  2126-2169 (bullets)             -> bullet.js
+  2171-2179 (disposeEnemy)        -> entity.destroy() in enemy scripts
+  2180-2208 (explosion/impact)    -> particles + pool-manager.js
+  2210-2475 (bounce cubes)        -> bounce-cube.js
+  2477-2567 (detach helpers)      -> platform-controller.js + crate.js etc.
+  2569-2653 (tile break)          -> platform-controller.js
+  2655-2724 (enemy lifecycle)     -> per-enemy script + combat events
+  2726-2734 (puffer explode)      -> shockwave.js
+  2736-2794 (collider helpers)    -> ball-physics.js (private)
+  2796-2868 (crate/gold collisions) -> ball-physics.js
+  2870-2925 (bullet vs gold/enemy) -> bullet.js + gold-block.js
+  2971-3030 (gold updates / fall) -> gold-block.js + crate.js
+  3032-3193 (cannon impl)         -> cannon.js
+  3194-3355 (updateEnemies)       -> per-enemy scripts
+  3357-3413 (spike updates)       -> spike-trap.js + pillar-spike.js
+  3415-3458 (saw + shockwave)     -> saw-blade.js + shockwave.js
+  3460-3497 (laser ring + parts)  -> pillar-laser-ring.js + particles
+  3499-3547 (floating texts)      -> floating-text.js + atlas
+  3549-3666 (clearTower/startLevel) -> platform-spawner.js
+  3668-3707 (resetGame/endGame)   -> game-state.js + leaderboard.js
+  3709-3756 (leaderboard)         -> leaderboard.js (Firebase)
+  3758-3815 (damage/powerups)     -> combat.js
+  3817-3845 (ball visual)         -> ball-physics.js or a tiny visual script
+  3847-3944 (shop)                -> shop-manager.js
+  3946-3972 (level complete)      -> level-complete-manager.js
+  3974-4003 (scratch vec3s)       -> math-utils.js
+  4005-4055 (debug overlay)       -> dropped (debug=true URL flag still ok)
+  4057-4092 (band index)          -> spatial-index.js
+  4094-4247 (ball-platform col.)  -> ball-physics.js
+  4249-4289 (recyclePlatforms)    -> platform-spawner.js
+  4291-4313 (camera follow/shake) -> camera-shake.js
+  4315-4336 (tile flash)          -> platform-controller.js + flashing set
+  4338-4819 (AR mode)             -> ar-mode.js + AR templates
+  4820-5105 (UI bindings)         -> pause-manager.js + ui-manager.js +
+                                     shop-manager.js + level-complete-manager.js
+  5112-5127 (input wiring)        -> player-input.js
+  5129-5133 (resize)              -> handled by pc.app
+  5135-5215 (animate loop)        -> game-loop.js
+  5217-5220 (boot)                -> game-loop.js initialize()
+
+================================================================================
+END OF PORT PLAN
+================================================================================

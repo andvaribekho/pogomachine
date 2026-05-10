@@ -1,0 +1,638 @@
+================================================================================
+HELIX DESCENT — OPTIMIZATION & BUG-FIX PLAN
+================================================================================
+Audit scope: src/main.js (5220 lines), src/core/, src/data/, src/systems/, index.html
+Audit date: 2026-05-10
+Author: Claude (analysis), brunocamousseigt (project)
+
+This plan is organized in two parts:
+  PART A — BUGS (correctness, memory leaks, security)
+  PART B — PERFORMANCE (low-to-mid range device optimization)
+
+Each finding has:  [PRIORITY]  Location  -->  Fix.
+Priorities: P0 = ship-blocker, P1 = high impact, P2 = medium, P3 = polish.
+
+================================================================================
+PART A — BUGS
+================================================================================
+
+--------------------------------------------------------------------------------
+A1. [P0] SHARED GEOMETRY IS BEING DISPOSED → silent rendering corruption
+--------------------------------------------------------------------------------
+Three.js geometries/materials kept at module scope are referenced by many
+meshes. Calling .dispose() on one of them frees GPU buffers used by ALL
+instances. Subsequent draw calls render with stale/garbage GPU memory.
+
+Affected sites:
+
+  • main.js:716 createFloater()
+        new THREE.Mesh(floaterDiscGeometry, floaterMaterial.clone())
+    main.js:988 updateFloaters()  → floater.mesh.geometry.dispose()
+    main.js:1002 updateFloaters() (also disposes when scrolled past)
+    main.js:3584 clearTower()     → f.mesh.geometry.dispose()
+    => Disposes the SHARED floaterDiscGeometry. After the first floater is
+       consumed, all remaining + future floaters render broken.
+
+  • main.js:2530 spawnCoinPickup()
+        new THREE.Mesh(coinPickupGeometry, coinPickupMaterial)
+    main.js:2555 updateCoinPickups() → pickup.mesh.geometry.dispose()
+    main.js:2565 clearCoinPickups()  → pickup.mesh.geometry.dispose()
+    => Same issue. Shared coinPickupGeometry destroyed on first collect.
+
+  • main.js:1143 detachAcidPuddlesFromTile()
+        new THREE.Mesh(acidDropletGeometry, dropletMaterial)
+    main.js:1111 updateAcidPuddles() → puddle.mesh.geometry.dispose()
+    main.js:1160 clearAcidPuddles()  → puddle.mesh.geometry.dispose()
+    => If a falling droplet is force-cleared, the shared acidDropletGeometry
+       is disposed, breaking every later acid drop that level.
+
+FIX:
+  Remove every .geometry.dispose() call on instances that share a module-scope
+  geometry. Only dispose the per-instance materials (which are cloned).
+  For the falling acid droplet, never dispose the shared geometry; only
+  dispose the per-instance material.
+
+  Establish a project rule: "If the geometry was constructed at module scope
+  (top of main.js block ~lines 291–325), it is SHARED and must NEVER be
+  disposed by per-instance cleanup."
+
+
+--------------------------------------------------------------------------------
+A2. [P0] JSONBin write key exposed in client source
+--------------------------------------------------------------------------------
+  main.js:38-39
+    const JSONBIN_BIN_ID = '69fd1176adc21f119a6b5071';
+    const JSONBIN_ACCESS_KEY = '$2a$10$rijn8M9JPA3wd...'; // full write key
+
+Anyone can deface or wipe the leaderboard. This is shipped to every client.
+
+FIX (pick one, in order of preference):
+  a) Replace JSONBin with a tiny serverless function (Vercel/Cloudflare Worker)
+     that holds the secret server-side and validates submissions.
+  b) Use a JSONBin "Master Key" with X-Bin-Private and a separate read-only
+     "Access Key" — never bundle the master key.
+  c) Move scores to Firebase (already a project dependency!) with security
+     rules. Cheapest path because firebase is already in package.json.
+
+After rotating: revoke the leaked key on JSONBin's dashboard.
+
+
+--------------------------------------------------------------------------------
+A3. [P1] combo state never reset on game restart → stale combo sprite + count
+--------------------------------------------------------------------------------
+  main.js:3668 resetGame()
+    Resets score, level, hp, coins, powerups… but does NOT reset `combo`
+    or call resetCombo(). startLevel() (3618) also does not.
+
+Symptom: after Game Over, on restart the player keeps the prior combo
+multiplier, and the previous combo sprite may still be in the scene.
+Also `comboShieldAwardedThisCombo` is not reset.
+
+FIX:
+  In resetGame() (or at the top of startLevel()):
+    combo = 0;
+    comboShieldAwardedThisCombo = false;
+    updateComboSprite();   // tears down sprite when combo === 0
+  Remove the duplicated updateComboSprite() call at main.js:1815-1816.
+
+
+--------------------------------------------------------------------------------
+A4. [P1] Acid puddle / spike-trap leak when platform is recycled
+--------------------------------------------------------------------------------
+  main.js:4249 recyclePlatforms()
+  Removes the platform group, traverses its children to dispose
+  geometry+material, BUT does not splice the corresponding entries from
+  acidPuddles[] (and only partially handles spikeTraps and goldBlocks).
+
+  After recycle:
+    - acidPuddle.platformData.group is detached but still referenced.
+      updateAcidPuddles continues to localToWorld against a detached group;
+      collider position is wrong and damage may fire spuriously.
+    - On expiry, puddle.mesh.geometry.dispose() runs on an already-disposed
+      geometry (idempotent in three.js, OK), then puddle.material.dispose()
+      runs on a material whose underlying GPU buffer is gone.
+
+FIX:
+  In recyclePlatforms() (the "y > ball.position.y + 12" branch), also do:
+    for (let p = acidPuddles.length - 1; p >= 0; p -= 1) {
+      if (acidPuddles[p].platformData === platform) acidPuddles.splice(p, 1);
+    }
+  Same for any other lists referencing the platform.
+
+
+--------------------------------------------------------------------------------
+A5. [P1] Acid droplet falling forever
+--------------------------------------------------------------------------------
+  main.js:1041-1097 updateAcidPuddles()
+    A puddle in the `falling` state has no upper-bound check. If it misses
+    every platform and the ball outruns it, the droplet stays in the
+    acidPuddles array forever (mesh in scene, ticked every frame).
+
+FIX:
+  In the falling branch, after the platform-landing loop:
+    if (puddle.mesh.position.y > ball.position.y + 15
+        || puddle.mesh.position.y < ball.position.y - 60) {
+      puddle.mesh.removeFromParent();
+      puddle.material.dispose();   // do NOT dispose acidDropletGeometry
+      acidPuddles.splice(i, 1);
+      continue;
+    }
+
+
+--------------------------------------------------------------------------------
+A6. [P2] acidSnail cracked-shell material leak
+--------------------------------------------------------------------------------
+  main.js:3317
+    enemy.shell.material = acidSnailCrackedShellMaterial.clone();
+  The previous enemy.shell.material (acidSnailShellMaterial.clone() from
+  createAcidSnailMesh, line 916) is dropped without dispose().
+
+FIX:
+  const old = enemy.shell.material;
+  enemy.shell.material = acidSnailCrackedShellMaterial.clone();
+  old.dispose();
+
+
+--------------------------------------------------------------------------------
+A7. [P2] resetGame() doesn't reset gameplay timers / shop tile state
+--------------------------------------------------------------------------------
+  Not reset by resetGame():
+    acidStompImmunity, acidBurnCooldown, fireCooldown,
+    nextShotId (technically harmless — counter), nextBounceCubeOrder,
+    selectedWeapon (intentional? probably yes), shopUsed (handled inside
+    startLevel, OK).
+  damageCooldown IS reset but only inside startLevel.
+
+FIX:
+  Centralize per-run resets in resetGame() before calling startLevel().
+  Make startLevel() responsible for level-scoped state only.
+
+
+--------------------------------------------------------------------------------
+A8. [P2] floater material leak
+--------------------------------------------------------------------------------
+  main.js:716 floaterMaterial.clone() per floater. Floater removal at
+  988/1003/3584 disposes geometry (the bug from A1) but never disposes the
+  cloned material. After A1 is fixed, also dispose floater.mesh.material.
+
+FIX:
+  if (floater.mesh.material !== floaterMaterial) floater.mesh.material.dispose();
+
+
+--------------------------------------------------------------------------------
+A9. [P2] handle leaderboard race conditions
+--------------------------------------------------------------------------------
+  submitScoreToLeaderboard reads → mutates → writes. Two concurrent submits
+  lose data. (Tied to A2 — fixing it on a real backend solves this.)
+
+
+--------------------------------------------------------------------------------
+A10. [P3] Minor correctness & dead code
+--------------------------------------------------------------------------------
+  • main.js:1815-1816   updateComboSprite() called twice in resetCombo.
+  • main.js:3580        spikeTraps.length = 0;  has wrong indentation; visually
+                         hides ownership of the line — fix indentation.
+  • main.js:1701        if (id > 9 && ...   missing leading indent.
+  • main.js:899         spike.rotation.z = 0;  starts at column 0 instead of 4.
+  • src/core/state.js   exports createGameState() but it is never imported;
+                         delete the file or actually use it.
+  • src/systems/ui.js   only updateHeartsUI/updateCoinsUI used; OK.
+  • main.js:1996        nothing wrong — note for the cross-file refactor below.
+  • main.js:5116        leaderboardPendingClose passed by VALUE into ctx, but
+                         input.js reads ctx.leaderboardPendingClose. The flag
+                         in main.js shadows it and they desync. Convert to a
+                         getter like the others on lines 5113-5126.
+
+
+================================================================================
+PART B — PERFORMANCE
+================================================================================
+
+GOALS
+  • Lift sustainable FPS on low/mid Android (Snapdragon 6-series, A11/A12 iOS,
+    integrated Intel laptops) from ~25–35 to a stable 60.
+  • Cut peak frame allocation from MB/s to KB/s (kill GC stutter).
+  • Cut per-level startup hitch (currently builds 20–110 platforms up front).
+  • Reduce GPU memory and draw-call count.
+
+--------------------------------------------------------------------------------
+B1. [P1] DRAW CALL EXPLOSION — every tile is its own material+geometry+mesh
+--------------------------------------------------------------------------------
+  main.js:495-597 createPlatform()
+    Each tile builds a unique MeshStandardMaterial AND a unique
+    BufferGeometry from makeArcGeometry. With segmentCount up to 13 and
+    a level-1 target of 20 platforms (level 10 → 110 platforms), that's
+    260–1430 separate draw calls just for tiles, each with its own material.
+
+PROPOSAL (largest perf win in the codebase):
+  1. Pre-build a SHARED arc geometry per (segmentCount, arcSize). Cache
+     keyed by `${segmentCount}` since all tiles in the same platform share
+     arcSize. Then each tile is just a Mesh referencing the shared geometry,
+     rotated to its angle by `mesh.rotation.y = -i * arcSize` instead of
+     baking the angle into vertices.
+  2. Batch tiles by COLOR using THREE.InstancedMesh. One InstancedMesh per
+     tile type (blue, gray, red, crackedBlue, finish, shop) per platform —
+     or even per tower. This collapses hundreds of draw calls into a handful.
+  3. Tile flash (updateTileFlashes) currently writes material.color directly.
+     With InstancedMesh, switch to a per-instance color attribute
+     (`InstancedMesh.setColorAt`). Update only the dirty instances.
+
+INTERIM FIX (cheap, do this first):
+  • Ensure tiles of the same type share a single material per platform.
+    Today each tile gets `new MeshStandardMaterial`. Use a per-type material
+    cache scoped to the platform (or global, with per-tile color override
+    only when flashing). Roughly halves materials and draw calls without
+    introducing instancing.
+
+EXPECTED GAIN: 2–4× FPS on integrated GPUs.
+
+
+--------------------------------------------------------------------------------
+B2. [P1] Geometry & material cloning is rampant and unnecessary
+--------------------------------------------------------------------------------
+  Geometries are immutable buffers. Materials only need cloning when their
+  per-instance state (color, emissive, opacity) actually diverges. Most of
+  the clones in this codebase are defensive, not necessary.
+
+  Sites that .clone() pointlessly:
+    • main.js:452,461  spikeHoleGeometry.clone(), spikeHoleMaterial.clone(),
+                       platformSpikeGeometry.clone(), platformSpikeMaterial.clone()
+    • main.js:600     crateGeometry.clone(), crateMaterial.clone()
+    • main.js:620     goldBlockGeometry.clone() — material can be shared if
+                       flash is moved to a per-instance shader attribute,
+                       but for now keep material clone (per-instance flash).
+    • main.js:689     pillarSpikeGeometry.clone(), pillarSpikeMaterial.clone()
+    • main.js:1195-1211  cannon parts: 4× geometry.clone() + 4× material.clone()
+    • main.js:1591    sawBladeMaterial.clone()  (sawBladeGeometry already shared)
+    • main.js:1625    pillarLaserRingMaterial.clone()
+    • main.js:716     floaterMaterial.clone()
+    • All the createXxxMesh() enemy builders that .clone() materials even
+       when no per-instance state varies (e.g. bat wings).
+
+FIX:
+  • Stop cloning geometries. Period. Geometries are render-only buffers.
+  • Only clone materials when the instance MUTATES color/emissive/opacity
+    (e.g. flash effects). Mark the rest as shared.
+  • Document at the top of main.js: "Materials below this line are SHARED;
+    treat them as read-only at runtime."
+
+EXPECTED GAIN: lower GPU memory pressure; faster level start; fewer GC hits.
+
+
+--------------------------------------------------------------------------------
+B3. [P1] Per-frame Vector3 / Material / Mesh allocations
+--------------------------------------------------------------------------------
+  Garbage in the hot path causes minor-GC stutter on low-end. Hot offenders:
+
+  • spawnExplosion (main.js:2180) — creates `count` new MeshBasicMaterial
+    per call. Called on every enemy death, every tile break (count=18),
+    every shockwave (...). Easily 100s of new materials per second.
+  • spawnBulletImpact (2195) — 7 new materials per bullet hit.
+  • spawnGoldSparkle (2927) — 1 new material every 0.06–0.12s per gold
+    block; 3 gold blocks/level → ~30/sec/level.
+  • updateAcidPuddles inner loop (1023) — 2 new MeshBasicMaterial per puddle
+    every 0.05s.
+  • spawnFloatingText (3499) — new 256×128 canvas, 2D context, CanvasTexture,
+    SpriteMaterial, Sprite per call. Fired on Reload, Combo Loss, NO HIT,
+    SHIELD, COMBO SHIELD, VAMP +1.
+  • updateComboSprite (1760) — same canvas-texture allocation EVERY combo
+    increment.
+  • bullet spawnBullet (2028) — `velocity.clone()` per shot.
+  • getBounceCubeWorldPosition (2405) — `cube.mesh.position.clone()` every
+    call (called twice per cube per frame).
+  • isGoldBlockPositionClear (629) — new Vector3 per gold-block placement
+    check, but worse: nested for-of loops also new Vector3 per gold block.
+  • damageGoldBlock (2910), checkBallGoldBlockStomp (2835),
+    checkBulletGoldBlockHit (2951) — `new THREE.Vector3()` per call.
+  • spawnAcidPuddle (935) — fresh CircleGeometry per puddle (this one is
+    legitimate because of varying size, but pool the two sizes).
+  • detachCratesAndGoldFromTile (2477) — `new Vector3` inside both inner loops.
+  • getArControllerDistance (4576) — 2 fresh Vector3 every poll.
+  • handlePlatformCollision (4177), checkBulletPlatformHit (4105),
+    handlePlatformUndersideCollision (4150) — `crossedPlatforms = []` per
+    call, then sort. With the bandIndex it's usually 1 element so the sort
+    is harmless, but the array allocation isn't.
+
+FIX (general pattern):
+  • Pre-allocate particle materials. Particles already share particleGeometry;
+    extend the same idea: a shared MeshBasicMaterial per `color` value, with
+    instance-level opacity using vertex colors via InstancedMesh, or simply
+    accept that all particles of the same explosion share one material.
+  • Pool MeshBasicMaterials keyed by color hex.
+  • Replace floating texts and combo sprite with a SINGLE persistent canvas
+    + SINGLE CanvasTexture; redraw into it and set texture.needsUpdate = true.
+    Already 1 sprite per text — but allocate once, redraw on demand.
+    Better: pre-render a small atlas of common strings ("Reload",
+    "Combo Loss", "NO HIT", "SHIELD", "VAMP +1", digits 0–999) at boot.
+  • Add module-level scratch Vec3s for the remaining sites; you already
+    have 25+ scratch vectors at lines 3974-4003 — extend to cover the
+    sites listed above.
+  • Reuse `crossedPlatforms` array as a module-level scratch; clear with
+    `arr.length = 0`.
+
+EXPECTED GAIN: eliminates audible/visible "hiccups" on Android.
+
+
+--------------------------------------------------------------------------------
+B4. [P1] Whole-level construction up-front
+--------------------------------------------------------------------------------
+  main.js:3656-3660 startLevel()
+    for (let i = 0; i <= target; i += 1) createPlatform(...)
+  Level 1 = 20 platforms; Level 10 = 110 platforms; each platform spawns
+  enemies, cannons, and other props in createPlatform → maybeSpawnXxx.
+
+  This means a multi-second hitch when a level starts, AND the player
+  pays full memory + draw-call cost for content that's tens of meters
+  below the camera.
+
+FIX (streaming):
+  • Generate only the platforms within ~12 spacings below the ball
+    initially (≈ 2× the recyclePlatforms keep-zone above the player).
+  • Track nextPlatformId and the deepest spawned Y; when the ball passes
+    a threshold, spawn the next 1–2 platforms.
+  • Pair this with a level-end "finish platform" placeholder: when the
+    streamer is within N platforms of `target`, force the next spawn to
+    be the final platform.
+  • Same model for spawnPillarSpikesForLevel, spawnFloatersForLevel,
+    spawnSawBladesForLevel, spawnPillarLaserRingsForLevel,
+    spawnGoldBlocksForLevel — these currently iterate the full level.
+
+EXPECTED GAIN: removes startup hitch; lower memory; better thermals on mobile.
+
+
+--------------------------------------------------------------------------------
+B5. [P1] Renderer settings are not adaptive
+--------------------------------------------------------------------------------
+  main.js:92-96
+    new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    shadowMap.enabled = true;
+
+  • antialias:true forces 4×MSAA-equivalent fragment cost everywhere.
+  • alpha:true is unused — scene.background is set, so drop it (frees a
+    framebuffer attachment).
+  • DPR cap of 2 on a Pixel 4a (DPR 2.75) means 22% more pixels than DPR 1.5.
+  • shadowMap default is PCFShadowMap with default size (512×512). Many
+    objects have castShadow = true, including small spikes, gold blocks,
+    cannons, sawblades, enemies. Shadows are the most expensive part of
+    a Three scene by a wide margin on integrated GPUs.
+
+FIX (adaptive quality preset):
+  Detect a "low" preset based on:
+    - navigator.hardwareConcurrency <= 4
+    - navigator.deviceMemory <= 4
+    - DPR > 2
+    - or a manual Quality option in the pause panel.
+  Apply preset:
+    LOW:
+      antialias: false, alpha: false, dpr: 1.0,
+      shadowMap.enabled: false (or 256×256 BasicShadowMap on key objects only),
+      ball segments 16×12, pillar segments 24,
+      hemisphere light only, drop directional sun's shadow,
+      reduce particle count factor by 0.5,
+      disable jellyfish/puffer transparency emissive,
+      use MeshLambertMaterial for tiles (no metalness/roughness PBR).
+    MEDIUM (default):
+      current settings minus alpha:true, dpr cap 1.75.
+    HIGH:
+      antialias on, dpr cap 2, shadows.
+  Persist the choice in localStorage.
+
+
+--------------------------------------------------------------------------------
+B6. [P2] Material choices for opaque scenery
+--------------------------------------------------------------------------------
+  Almost every static prop (tiles, pillar, ledges, crates, gold) uses
+  MeshStandardMaterial — physically based, expensive shader. The art style
+  is flat-shaded cartoon; PBR is overkill.
+
+FIX:
+  • Replace tile/pillar/crate/gold materials with MeshLambertMaterial
+    (cheap diffuse) or MeshPhongMaterial. On low preset use MeshLambert.
+  • Keep MeshStandardMaterial only for the gold block (it benefits from
+    metalness) and the player ball — and only on HIGH preset.
+
+EXPECTED GAIN: 10–25% GPU time on integrated.
+
+
+--------------------------------------------------------------------------------
+B7. [P2] Mesh primitive segment counts are over-tessellated
+--------------------------------------------------------------------------------
+  main.js:276    pillar CylinderGeometry(_, _, 80, 48)        → 24 is fine
+  main.js:284    ball SphereGeometry(_, 32, 24)               → 16, 12
+  main.js:291    bullet SphereGeometry(_, 16, 12)             → 8, 6
+  main.js:293    bat body SphereGeometry(_, 16, 10)           → 12, 8
+  main.js:295    spike body SphereGeometry(_, 20, 14)         → 14, 10
+  main.js:297    particle SphereGeometry(_, 8, 6)             → ok
+  main.js:303-15 worm/turtle/jellyfish/puffer/porcupine ~16,12 → 12, 8
+  main.js:317    pillarLaserRingGeometry TorusGeometry(_, _, 8, 96)
+                                                              → (8, 48)
+  main.js:325-7  sawBladeShape uses 32 points; OK.
+
+FIX:
+  Replace each with its right-sized counterpart. Saves vertex count, memory,
+  and shadow map fill cost where shadows are enabled.
+
+
+--------------------------------------------------------------------------------
+B8. [P2] Spatial index is partial — ground enemies, puddles, traps, snails
+       all do O(N_platforms) scans
+--------------------------------------------------------------------------------
+  platformBandIndex (4061-4092) is only used by ball/bullet vs platform
+  collision. Other systems still do `for (const platform of platforms)`:
+
+    main.js:1063   updateAcidPuddles falling-landing scan
+    main.js:1397   updateGroundEnemyFall
+    main.js:2322   updateBounceCubes landing scan
+    main.js:3001/3018  updateFallingCratesAndGold
+    main.js:3108   cannonHasLineOfSight (loops every frame per cannon)
+
+  At level 10 with ~110 platforms, that's 110 × N_active_objects scans/frame.
+
+FIX:
+  Refactor each of those to use `getPlatformsNearY(yLow, yHigh)`.
+  cannonHasLineOfSight should only check platforms BETWEEN cannon and ball
+  in Y — already a narrow band.
+
+
+--------------------------------------------------------------------------------
+B9. [P2] Frustum / Y-distance culling for distant platforms
+--------------------------------------------------------------------------------
+  Platforms below the ball but within the recycle zone (~12 spacings) are
+  always rendered; some are visible, some aren't (camera frustum). Three.js
+  does frustum culling per Mesh, which is fine, but with hundreds of meshes
+  that's hundreds of bounding-sphere tests per frame.
+
+FIX:
+  • Wrap each platform's tiles into a single Group with a precomputed
+    bounding sphere; let Three frustum-cull the group as one unit.
+  • Set `platform.group.visible = false` for platforms below
+    ball.position.y - 30 (below the camera's far plane minus margin).
+    Restoring visibility is a no-op when ball climbs back (it doesn't).
+
+
+--------------------------------------------------------------------------------
+B10. [P2] scene.updateMatrixWorld(true) every frame
+--------------------------------------------------------------------------------
+  main.js:5182
+    scene.updateMatrixWorld(true);
+  Forces a recursive matrix update for the entire scene every frame.
+  Three.js auto-updates matrices on render; calling this manually before
+  render double-pays the cost.
+
+FIX:
+  • Remove the line. If a specific subtree needs early matrices for a
+    same-frame collision query, do `world.updateMatrixWorld(true)` ONCE
+    only on the subtree, only the frames where you actually query.
+  • Better: set `mesh.matrixAutoUpdate = false` on static meshes
+    (recycled platforms' tiles never move locally) and call
+    `mesh.updateMatrix()` once when added.
+
+
+--------------------------------------------------------------------------------
+B11. [P2] Bounce-cube pool size 100 always allocated
+--------------------------------------------------------------------------------
+  main.js:2210 ensureBounceCubePool() — 100 cubes × 1 MeshStandardMaterial
+  each on first call. Probably never needed in practice.
+
+FIX:
+  Lower pool to 32, expand on demand by chunks of 16. Use a single shared
+  material with InstancedMesh — even better, all bounce cubes can be ONE
+  InstancedMesh of capacity N with per-instance color (already only gold &
+  bonus colors, ~3 distinct values).
+
+
+--------------------------------------------------------------------------------
+B12. [P2] Wireframe shockwave = expensive
+--------------------------------------------------------------------------------
+  main.js:362  shockwaveMaterial: { wireframe: true }
+  Wireframe rendering disables triangle fill but renders edges as lines —
+  high overdraw on a 24×16 sphere.
+
+FIX:
+  Replace with an additive transparent ring (TorusGeometry) or two
+  concentric thin spheres with `MeshBasicMaterial({ transparent:true,
+  opacity:0.3, blending:THREE.AdditiveBlending, depthWrite:false })`.
+  Single mesh per shockwave, no wireframe.
+
+
+--------------------------------------------------------------------------------
+B13. [P3] Audio nodes are created per call
+--------------------------------------------------------------------------------
+  systems/audio.js — every play* function creates a fresh OscillatorNode
+  + GainNode and discards them after stop(). Acceptable on desktop. On
+  low-end Android browsers, hundreds of one-shot oscillators can build
+  GC pressure.
+
+FIX:
+  Build a tiny voice pool (e.g. 8 oscillator+gain pairs) and reset their
+  parameters on each play. Stop scheduling oscillators inside `try`-wrapped
+  string-concat code paths.
+
+
+--------------------------------------------------------------------------------
+B14. [P3] DOM / UI thrash
+--------------------------------------------------------------------------------
+  • updateAmmoUI iterates ammoSegments and calls classList.toggle every
+    fire and every reload. Cheap but called inside the fireCurrentWeapon
+    while-loop in updateShooting (could fire 5×/frame for shotgun).
+    Mitigate: only update if `ammo` value actually changed.
+  • spawnCoinPickupAnimation creates a DOM element and animates it via
+    transition. Fine; just throttle to N visible at once.
+  • updateLevelUI rewrites textContent every frame. Compare prior values
+    to skip unchanged updates.
+  • progressFillEl.style.width forces layout. Cheap, but guard with a
+    cached previous percentage.
+
+
+--------------------------------------------------------------------------------
+B15. [P3] Animation loop runs render() even when paused / level-complete
+--------------------------------------------------------------------------------
+  main.js:5210 calls `renderer.render(scene, camera)` every frame
+  unconditionally. When paused you still pay render cost. Acceptable
+  for now but on AR-paused background the desktop scene is still rendered.
+
+FIX:
+  When isPaused && !arModeActive, skip render every other frame, OR skip
+  entirely after the first paused render.
+
+
+--------------------------------------------------------------------------------
+B16. [P3] sun DirectionalLight uses default shadow camera
+--------------------------------------------------------------------------------
+  main.js:377-380 sun.castShadow = true. Default shadow camera covers
+  a tiny ortho frustum and a 512×512 map. Shadows on tall towers are
+  often clipped or low-res anyway.
+
+FIX:
+  Either:
+    a) sun.castShadow = false;  // simplest — flat shadow look already fits
+                                  the cartoon style.
+    b) Tune sun.shadow.camera frustum to ball.position.y ± 6, shadow.mapSize
+       = 512 on LOW, 1024 on HIGH.
+
+
+--------------------------------------------------------------------------------
+B17. [P3] Tile flash uses .copy(_flashA.lerp(_flashB, t))
+--------------------------------------------------------------------------------
+  main.js:4318-4336 walks every tile of every platform, every frame, even
+  when no tiles are flashing. With ~110 platforms × 10 tiles = 1100 checks
+  per frame.
+
+FIX:
+  Maintain a flashingTiles Set; push on flash start, remove when timer
+  expires. updateTileFlashes iterates only that Set.
+
+
+--------------------------------------------------------------------------------
+B18. [P3] AR fallback is bundled with main game JS
+--------------------------------------------------------------------------------
+  main.js lines 4338-4819 implement the entire AR mode (~480 lines).
+  Mobile users without WebXR still parse and JIT-compile this code.
+
+FIX:
+  Move AR to its own module (src/systems/ar.js); dynamic-import it only
+  on the AR button click. Drops parse time on mobile.
+
+
+================================================================================
+PROPOSED EXECUTION ORDER
+================================================================================
+
+Phase 1 — Bug fixes (1 short PR):
+  A1, A4, A5, A6, A8 (memory/render-correctness leaks) — these are the
+  invisible-but-real bugs likely causing the rare visual glitches.
+  A3 (combo reset on game over) — visible to players.
+  A2 (security) — open a separate PR; rotate the JSONBin key first.
+
+Phase 2 — Cheap perf wins (1 PR):
+  B5 quality presets, B6 material swap, B7 mesh resolution, B12 shockwave,
+  B13 audio pooling, B16 sun shadow, B10 remove updateMatrixWorld(true).
+  Expected: +30–50% FPS on low-end with no behavior change.
+
+Phase 3 — Architectural perf (separate PRs):
+  B1 instanced tiles + shared geometries (largest single win).
+  B2 stop cloning geometries / materials project-wide.
+  B3 allocation cleanup (scratch vec3s, particle material pool, sprite atlas).
+  B4 streaming level construction.
+  B8 expand spatial index usage to other systems.
+  B11 InstancedMesh for bounce cubes.
+
+Phase 4 — Polish:
+  B9 group-level culling, B14 UI thrash guards, B15 paused-frame skip,
+  B17 flashing-tiles set, B18 AR code split.
+  A7, A9, A10 housekeeping.
+
+================================================================================
+TARGET DEVICE BUDGET (after all phases)
+================================================================================
+  Low-end Android (Snapdragon 6, DPR 2.75):
+    16–18 ms/frame steady, no minor-GC stutter > 2 ms, < 200 MB GPU mem.
+  Mid-end laptop (Intel Iris):
+    12–14 ms/frame, no shadow popping.
+  Quest 3 (AR):
+    72 Hz steady, no allocation-driven hitches.
+
+================================================================================
+END OF PLAN
+================================================================================
