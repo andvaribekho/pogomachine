@@ -199,13 +199,13 @@ let platformsPassedThisLevel = 0;
 let nextPlatformId = 0;
 let isGameOver = false;
 let isPaused = false;
-let impulseMode = 'A';
+let impulseMode = 'C';
 let impulseBResetSpeed = defaultGravity * 0.1;
 let impulseBShotgunImpulse = 4;
-let impulseCfactor = 0.9;
+let impulseCfactor = 0.93;
 let controlMode = 'A';
-let twistBMode = false;
-let flyingModeB = false;
+let twistBMode = true;
+let flyingModeB = true;
 let timeScale = 1;
 let damageSlowdownTimer = 0;
 let grayscaleAmount = 0;
@@ -312,6 +312,9 @@ const turtleSpikeGeometry = new THREE.ConeGeometry(0.055, 0.18, 8);
 const jellyfishBodyGeometry = new THREE.SphereGeometry(0.24, 18, 12);
 const jellyfishTentacleGeometry = new THREE.CylinderGeometry(0.018, 0.012, 0.38, 6);
 const pufferBodyGeometry = new THREE.SphereGeometry(0.25, 18, 12);
+const mushroomStemGeometry = new THREE.CylinderGeometry(0.1, 0.14, 0.32, 12);
+const mushroomCapGeometry = new THREE.SphereGeometry(0.26, 18, 12);
+const mushroomSpotGeometry = new THREE.SphereGeometry(0.045, 8, 6);
 const porcupineBodyGeometry = new THREE.SphereGeometry(0.25, 16, 12);
 const acidPuddleGeometry = new THREE.CircleGeometry(0.22, 20);
 const acidDropletGeometry = new THREE.SphereGeometry(0.1, 10, 8);
@@ -359,6 +362,9 @@ const turtleBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4caf50, rou
 const turtleShellMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, emissive: 0x7a0000, emissiveIntensity: 0.18, roughness: 0.44, metalness: 0.08 });
 const jellyfishMaterial = new THREE.MeshStandardMaterial({ color: 0x9c27b0, emissive: 0x4a148c, emissiveIntensity: 0.28, roughness: 0.36, transparent: true, opacity: 0.82 });
 const pufferMaterial = new THREE.MeshStandardMaterial({ color: 0xffc107, emissive: 0xff6f00, emissiveIntensity: 0.22, roughness: 0.48 });
+const mushroomStemMaterial = new THREE.MeshStandardMaterial({ color: 0xfdd835, emissive: 0x8a6d00, emissiveIntensity: 0.14, roughness: 0.55 });
+const mushroomCapMaterial = new THREE.MeshStandardMaterial({ color: 0xffeb3b, emissive: 0xff9800, emissiveIntensity: 0.2, roughness: 0.5 });
+const mushroomSpotMaterial = new THREE.MeshStandardMaterial({ color: 0xe53935, emissive: 0x7f0000, emissiveIntensity: 0.18, roughness: 0.48 });
 const porcupineMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.56, metalness: 0.04 });
 const porcupineSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
 const acidPuddleMaterial = new THREE.MeshStandardMaterial({ color: colors.acid, emissive: 0x2e7d32, emissiveIntensity: 0.45, roughness: 0.6, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
@@ -888,6 +894,40 @@ function createPufferBombMesh() {
   return { group, material };
 }
 
+function createExplosiveMushroomMesh() {
+  const group = new THREE.Group();
+  const stemMaterial = mushroomStemMaterial.clone();
+  const capMaterial = mushroomCapMaterial.clone();
+  const spotMaterial = mushroomSpotMaterial.clone();
+
+  const stem = new THREE.Mesh(mushroomStemGeometry, stemMaterial);
+  stem.position.y = -0.08;
+  stem.castShadow = true;
+  group.add(stem);
+
+  const cap = new THREE.Mesh(mushroomCapGeometry, capMaterial);
+  cap.scale.set(1.25, 0.58, 1.25);
+  cap.position.y = 0.11;
+  cap.castShadow = true;
+  group.add(cap);
+
+  const spotPositions = [
+    [0, 0.19, -0.2],
+    [-0.14, 0.22, -0.06],
+    [0.14, 0.22, -0.06],
+    [-0.08, 0.24, 0.12],
+    [0.11, 0.23, 0.13],
+  ];
+  for (const [x, y, z] of spotPositions) {
+    const spot = new THREE.Mesh(mushroomSpotGeometry, spotMaterial);
+    spot.position.set(x, y, z);
+    spot.scale.y = 0.35;
+    group.add(spot);
+  }
+
+  return { group, stemMaterial, capMaterial, spotMaterial };
+}
+
 function createPorcupineMesh() {
   const group = new THREE.Group();
   const material = porcupineMaterial.clone();
@@ -1302,6 +1342,8 @@ function positionEnemy(enemy) {
     return;
   }
 
+  if (enemy.type === 'explosiveMushroom') return;
+
   enemy.group.position.set(
     Math.cos(enemy.angle) * enemy.orbitRadius,
     enemy.y,
@@ -1624,6 +1666,33 @@ function splitJellyfish(enemy, position) {
   }
 }
 
+function createExplosiveMushroom(platformData, id, tile) {
+  const built = createExplosiveMushroomMesh();
+  const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
+  const enemy = {
+    type: 'explosiveMushroom',
+    id,
+    group: built.group,
+    materials: [built.stemMaterial, built.capMaterial, built.spotMaterial],
+    platformData,
+    y: platformData.group.position.y + platformThickness / 2 + 0.24,
+    angle,
+    localAngle: angle,
+    orbitRadius: gameplayLaneRadius,
+    collisionRadius: 0.36,
+    hp: 1,
+    flashTimer: 0,
+  };
+  enemy.group.position.set(
+    Math.cos(angle) * gameplayLaneRadius,
+    platformThickness / 2 + 0.24,
+    Math.sin(angle) * gameplayLaneRadius
+  );
+  enemy.group.rotation.y = -angle + Math.PI / 2;
+  platformData.group.add(enemy.group);
+  enemies.push(enemy);
+}
+
 function createTurtle(platformData, id, tile) {
   const turtle = createTurtleMesh();
   const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
@@ -1771,6 +1840,15 @@ function ensureInitialLowerPlatformYellowWorm() {
   createYellowWorm(platform, platform.id * 1000 + 1, tile);
 }
 
+function ensureInitialLowerPlatformMushroom() {
+  const platform = platforms.find(candidate => candidate.id === 1 && !candidate.final);
+  if (!platform) return;
+  const validTiles = platform.tiles.filter(isWormTile);
+  if (validTiles.length === 0) return;
+  const tile = validTiles[Math.min(1, validTiles.length - 1)];
+  createExplosiveMushroom(platform, platform.id * 1000 + 2, tile);
+}
+
 function maybeSpawnEnemiesForSection(platformData, id) {
   if (id < 5) return;
 
@@ -1792,6 +1870,11 @@ function maybeSpawnEnemiesForSection(platformData, id) {
   }
 
   maybeSpawnWorms(platformData, id);
+
+  if (id > 6 && Math.random() < 0.08 + difficulty * 0.12) {
+    const mushroomTiles = platformData.tiles.filter(isWormTile);
+    if (mushroomTiles.length > 0) createExplosiveMushroom(platformData, id, mushroomTiles[Math.floor(Math.random() * mushroomTiles.length)]);
+  }
 
   if (id > 7 && Math.random() < 0.1 + difficulty * 0.14) {
     createFloatingEnemy('jellyfish', sectionY + (Math.random() - 0.5) * 1.2, id);
@@ -2046,6 +2129,16 @@ function syncOptionsPanel() {
   impulseBResetInput.value = impulseBResetSpeed.toFixed(1);
   impulseBShotgunInput.value = impulseBShotgunImpulse.toFixed(1);
   impulseCFactorInput.value = impulseCfactor.toFixed(2);
+  impulseBResetLabel.hidden = impulseMode !== 'B';
+  impulseBShotgunLabel.hidden = impulseMode !== 'B';
+  impulseCFactorLabel.hidden = impulseMode !== 'C';
+  impulseAButton.classList.toggle('active', impulseMode === 'A');
+  impulseBButton.classList.toggle('active', impulseMode === 'B');
+  impulseCButton.classList.toggle('active', impulseMode === 'C');
+  twistBOffButton.classList.toggle('active', !twistBMode);
+  twistBOnButton.classList.toggle('active', twistBMode);
+  flyingModeBOffButton.classList.toggle('active', !flyingModeB);
+  flyingModeBOnButton.classList.toggle('active', flyingModeB);
 }
 
 function getLevelTarget(level = currentLevel) {
@@ -2769,13 +2862,13 @@ function removeEnemyAt(index, explosionColor) {
   spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
   if (enemy.type === 'jellyfish') splitJellyfish(enemy, position);
   if (enemy.type === 'yellowWorm') splitYellowWorm(enemy);
-  if (enemy.type === 'pufferBomb') explodePuffer(position);
+  if (enemy.type === 'pufferBomb' || enemy.type === 'explosiveMushroom') explodePuffer(position);
   spawnBounceCubes(position);
 }
 
 function killEnemyAt(index, explosionColor) {
   const enemy = enemies[index];
-  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine') playBatDeathSound();
+  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine' || enemy.type === 'explosiveMushroom') playBatDeathSound();
   score += 5 * Math.max(1, combo);
   scoreEl.textContent = String(score);
   removeEnemyAt(index, explosionColor);
@@ -2796,6 +2889,10 @@ function killEnemyAt(index, explosionColor) {
 function damageEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
   if (enemy.type === 'acidSnail') return;
+  if (enemy.type === 'explosiveMushroom') {
+    killEnemyAt(enemyIndex, colors.particle);
+    return;
+  }
   if (enemy.type === 'bat') {
     killEnemyAt(enemyIndex, colors.particle);
     return;
@@ -3382,6 +3479,8 @@ function updateEnemies(dt) {
           }
         }
       }
+    } else if (enemy.type === 'explosiveMushroom') {
+      // Fixed ground hazard: it only reacts to stomps and bullets.
     } else if (enemy.twistB || flyingModeB) {
       enemy.angle = (enemy.angle + enemy.speed * enemy.direction * dt + twoPi) % twoPi;
     } else {
@@ -3437,6 +3536,8 @@ function updateEnemies(dt) {
         enemy.bodyMaterial.emissiveIntensity = 0;
         enemy.shellMaterial.emissiveIntensity = 0;
       }
+    } else if (enemy.type === 'explosiveMushroom') {
+      enemy.group.scale.setScalar(1 + Math.sin(scaledTime * 3 + enemy.id) * 0.025);
     } else {
       enemy.group.rotation.x += dt * 1.1;
       enemy.group.rotation.z += dt * 0.8;
@@ -3448,7 +3549,7 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > getEnemyWorldPosition(enemy).y) {
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail' || enemy.type === 'explosiveMushroom') && ballVelocity < 0 && ball.position.y > getEnemyWorldPosition(enemy).y) {
       if (enemy.type === 'turtle') applyDamage();
       if (enemy.type === 'porcupine' && enemy.spikesOut) {
         applyDamage();
@@ -3813,6 +3914,7 @@ function startLevel() {
     nextPlatformId += 1;
   }
   ensureInitialLowerPlatformYellowWorm();
+  ensureInitialLowerPlatformMushroom();
   spawnGoldBlocksForLevel();
   spawnPillarSpikesForLevel();
   spawnFloatersForLevel();
@@ -4438,6 +4540,12 @@ function recyclePlatforms() {
       detachBounceCubesFromPlatform(platform);
       for (let g = goldBlocks.length - 1; g >= 0; g -= 1) {
         if (goldBlocks[g].platformData === platform) goldBlocks.splice(g, 1);
+      }
+      for (let e = enemies.length - 1; e >= 0; e -= 1) {
+        if (enemies[e].type === 'explosiveMushroom' && enemies[e].platformData === platform) {
+          disposeEnemy(enemies[e]);
+          enemies.splice(e, 1);
+        }
       }
       for (let s = spikeTraps.length - 1; s >= 0; s -= 1) {
         if (spikeTraps[s].platformGroup === platform.group) spikeTraps.splice(s, 1);

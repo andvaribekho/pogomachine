@@ -24,7 +24,7 @@
       <div id="weapon-indicator">Weapon: Machinegun</div>
       <div id="ammo-magazine"></div>
     </div>
-    <div id="version-label">v0.6 jellytwist</div>
+    <div id="version-label">v0.63 hongo</div>
     <button id="ar-mode-button" type="button">Enter AR mode</button>
     <div id="ar-status" hidden>Move the reticle onto a table, then pull the trigger to place the tower.</div>
     <button id="pause-button" type="button" aria-label="Open options">Options</button>
@@ -105,9 +105,9 @@
         <label>
           Impulse Mode
           <div class="button-group">
-            <button id="impulse-a-btn" type="button" class="mode-btn active">Impulse A</button>
+            <button id="impulse-a-btn" type="button" class="mode-btn">Impulse A</button>
             <button id="impulse-b-btn" type="button" class="mode-btn">Impulse B</button>
-            <button id="impulse-c-btn" type="button" class="mode-btn">Impulse C</button>
+            <button id="impulse-c-btn" type="button" class="mode-btn active">Impulse C</button>
           </div>
         </label>
         <label id="impulse-b-reset-label" hidden>
@@ -118,9 +118,9 @@
           Impulse B Shotgun Upward Impulse
           <input id="impulse-b-shotgun-input" type="number" min="0" max="20" step="0.1" value="4" />
         </label>
-        <label id="impulse-c-factor-label" hidden>
+        <label id="impulse-c-factor-label">
           Impulse C Factor
-          <input id="impulse-c-factor-input" type="number" min="0" max="1" step="0.05" value="0.9" />
+          <input id="impulse-c-factor-input" type="number" min="0" max="1" step="0.05" value="0.93" />
         </label>
         <label>
           Control Mode
@@ -132,15 +132,15 @@
         <label>
           Twist B
           <div class="button-group">
-            <button id="twist-b-off-btn" type="button" class="mode-btn active">Off</button>
-            <button id="twist-b-on-btn" type="button" class="mode-btn">On</button>
+            <button id="twist-b-off-btn" type="button" class="mode-btn">Off</button>
+            <button id="twist-b-on-btn" type="button" class="mode-btn active">On</button>
           </div>
         </label>
         <label>
           Volador ModoB
           <div class="button-group">
-            <button id="flying-mode-b-off-btn" type="button" class="mode-btn active">Off</button>
-            <button id="flying-mode-b-on-btn" type="button" class="mode-btn">On</button>
+            <button id="flying-mode-b-off-btn" type="button" class="mode-btn">Off</button>
+            <button id="flying-mode-b-on-btn" type="button" class="mode-btn active">On</button>
           </div>
         </label>
         <button id="close-extra-button" type="button">Close</button>
