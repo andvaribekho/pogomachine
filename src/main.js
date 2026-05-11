@@ -150,6 +150,8 @@ const controlAButton = document.querySelector('#control-a-btn');
 const controlBButton = document.querySelector('#control-b-btn');
 const twistBOffButton = document.querySelector('#twist-b-off-btn');
 const twistBOnButton = document.querySelector('#twist-b-on-btn');
+const flyingModeBOffButton = document.querySelector('#flying-mode-b-off-btn');
+const flyingModeBOnButton = document.querySelector('#flying-mode-b-on-btn');
 const shopPanelEl = document.querySelector('#shop-panel');
 const shopCoinsEl = document.querySelector('#shop-coins');
 const shopBulletBtn = document.querySelector('#shop-bullet');
@@ -203,6 +205,7 @@ let impulseBShotgunImpulse = 4;
 let impulseCfactor = 0.9;
 let controlMode = 'A';
 let twistBMode = false;
+let flyingModeB = false;
 let timeScale = 1;
 let damageSlowdownTimer = 0;
 let grayscaleAmount = 0;
@@ -646,7 +649,7 @@ function isGoldBlockPositionClear(platformData, localPosition) {
   }
 
   for (const enemy of enemies) {
-    const enemyPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+    const enemyPosition = getEnemyWorldPosition(enemy);
     if (Math.abs(enemyPosition.y - worldPosition.y) > goldBlockSize + 0.6) continue;
     if (enemyPosition.distanceToSquared(worldPosition) < minDistance * minDistance) return false;
   }
@@ -1055,7 +1058,7 @@ function updateAcidPuddles(dt) {
       const dropletRadiusSq = 0.1 * 0.1;
       for (let e = enemies.length - 1; e >= 0; e -= 1) {
         const enemy = enemies[e];
-        const enemyPos = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+        const enemyPos = getEnemyWorldPosition(enemy);
         const dx = puddle.mesh.position.x - enemyPos.x;
         const dy = puddle.mesh.position.y - enemyPos.y;
         const dz = puddle.mesh.position.z - enemyPos.z;
@@ -1307,6 +1310,12 @@ function positionEnemy(enemy) {
   enemy.group.rotation.y = -enemy.angle + Math.PI / 2;
 }
 
+function getEnemyWorldPosition(enemy, target = _enemyWorldPosition) {
+  if (enemy.type === 'pillarWorm') return enemy.collisionPosition;
+  enemy.group.getWorldPosition(target);
+  return target;
+}
+
 function createBat(y, id) {
   const bat = createBatMesh();
   const arcSpan = 1.05 + Math.random() * 0.25;
@@ -1327,12 +1336,15 @@ function createBat(y, id) {
     speed: (0.55 + Math.random() * 0.75) * 0.6,
     collisionRadius: 0.38,
     flapOffset: Math.random() * twoPi,
+    twistB: twistBMode,
   };
-  positionEnemy(enemy);
   if (twistBMode) {
     enemy.angle -= world.rotation.y;
+    enemy.arcCenter -= world.rotation.y;
+    positionEnemy(enemy);
     world.add(enemy.group);
   } else {
+    positionEnemy(enemy);
     scene.add(enemy.group);
   }
   enemies.push(enemy);
@@ -1358,12 +1370,15 @@ function createSpikedBall(y, id) {
     collisionRadius: 0.43,
     hp: 3,
     flashTimer: 0,
+    twistB: twistBMode,
   };
-  positionEnemy(enemy);
   if (twistBMode) {
     enemy.angle -= world.rotation.y;
+    enemy.arcCenter -= world.rotation.y;
+    positionEnemy(enemy);
     world.add(enemy.group);
   } else {
+    positionEnemy(enemy);
     scene.add(enemy.group);
   }
   enemies.push(enemy);
@@ -1555,6 +1570,7 @@ function createFloatingEnemyWithOptions(type, y, id, options = {}) {
   const arcSpan = 0.95 + Math.random() * 0.35;
   const arcCenter = getBulletLaneAngle();
   const angle = arcCenter + (Math.random() - 0.5) * arcSpan;
+  const useTwistB = options.twistB ?? (twistBMode && !options.small);
   const enemy = {
     type,
     id,
@@ -1563,9 +1579,9 @@ function createFloatingEnemyWithOptions(type, y, id, options = {}) {
     y,
     baseY: y,
     angle: options.angle ?? angle,
-    arcCenter,
+    arcCenter: options.arcCenter ?? arcCenter,
     arcSpan: options.arcSpan ?? arcSpan,
-    direction: Math.random() < 0.5 ? 1 : -1,
+    direction: options.direction ?? (Math.random() < 0.5 ? 1 : -1),
     orbitRadius: options.orbitRadius ?? gameplayLaneRadius,
     speed: options.speed ?? (isJellyfish ? 0.28 + Math.random() * 0.28 : 0.18 + Math.random() * 0.2),
     collisionRadius: options.collisionRadius ?? (isJellyfish ? 0.34 : 0.38),
@@ -1573,14 +1589,16 @@ function createFloatingEnemyWithOptions(type, y, id, options = {}) {
     flashTimer: 0,
     bobOffset: Math.random() * twoPi,
     splitOnDeath: options.splitOnDeath ?? (isJellyfish && !options.small),
+    twistB: useTwistB,
   };
   if (options.small) enemy.group.scale.setScalar(0.62);
-  positionEnemy(enemy);
-  if (twistBMode && !options.small) {
+  if (useTwistB) {
     enemy.angle -= world.rotation.y;
     enemy.arcCenter -= world.rotation.y;
+    positionEnemy(enemy);
     world.add(enemy.group);
   } else {
+    positionEnemy(enemy);
     scene.add(enemy.group);
   }
   enemies.push(enemy);
@@ -1588,15 +1606,20 @@ function createFloatingEnemyWithOptions(type, y, id, options = {}) {
 
 function splitJellyfish(enemy, position) {
   if (!enemy.splitOnDeath) return;
+  const parentAngle = enemy.twistB ? enemy.angle + world.rotation.y : enemy.angle;
+  const parentArcCenter = enemy.twistB ? enemy.arcCenter + world.rotation.y : enemy.arcCenter;
   for (let i = 0; i < 2; i += 1) {
     createFloatingEnemyWithOptions('jellyfish', position.y + (i - 0.5) * 0.25, enemy.id + 1000 + i, {
       small: true,
       hp: 1,
       collisionRadius: enemy.collisionRadius * 0.65,
       orbitRadius: gameplayLaneRadius,
-      angle: enemy.angle + (i - 0.5) * 0.35,
+      angle: parentAngle + (i - 0.5) * 0.35,
+      arcCenter: parentArcCenter,
       arcSpan: enemy.arcSpan * 0.8,
       speed: enemy.speed * 1.35,
+      direction: i === 0 ? -1 : 1,
+      twistB: enemy.twistB,
     });
   }
 }
@@ -2905,14 +2928,15 @@ function getBallEnemyContact(enemy) {
   const hitRadiusSq = hitRadius * hitRadius;
   const sideHitRadius = enemy.collisionRadius + sideHitboxRadius;
   const sideHitRadiusSq = sideHitRadius * sideHitRadius;
+  const collisionPosition = getEnemyWorldPosition(enemy);
 
-  if (colliders.bottom.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'bottom';
-  if (colliders.top.distanceToSquared(enemy.group.position) <= hitRadiusSq) return 'top';
-  if (colliders.left.distanceToSquared(enemy.group.position) <= sideHitRadiusSq) return 'left';
-  if (colliders.right.distanceToSquared(enemy.group.position) <= sideHitRadiusSq) return 'right';
+  if (colliders.bottom.distanceToSquared(collisionPosition) <= hitRadiusSq) return 'bottom';
+  if (colliders.top.distanceToSquared(collisionPosition) <= hitRadiusSq) return 'top';
+  if (colliders.left.distanceToSquared(collisionPosition) <= sideHitRadiusSq) return 'left';
+  if (colliders.right.distanceToSquared(collisionPosition) <= sideHitRadiusSq) return 'right';
 
   const fallbackRadius = enemy.collisionRadius + sideHitboxRadius;
-  return ball.position.distanceToSquared(enemy.group.position) <= fallbackRadius * fallbackRadius ? 'body' : null;
+  return ball.position.distanceToSquared(collisionPosition) <= fallbackRadius * fallbackRadius ? 'body' : null;
 }
 
 function checkBulletCrateHit(bullet, previousY) {
@@ -2995,7 +3019,7 @@ function checkBulletEnemyHit(bullet) {
     if (bullet.hitEnemies?.has(enemy)) continue;
     const hitRadius = enemy.collisionRadius + 0.12;
     if (enemy.type === 'pillarWorm' && !enemy.interactable) continue;
-    const collisionPosition = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+    const collisionPosition = getEnemyWorldPosition(enemy);
     if (bullet.mesh.position.distanceToSquared(collisionPosition) <= hitRadius * hitRadius) {
       if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
       if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
@@ -3358,6 +3382,8 @@ function updateEnemies(dt) {
           }
         }
       }
+    } else if (enemy.twistB || flyingModeB) {
+      enemy.angle = (enemy.angle + enemy.speed * enemy.direction * dt + twoPi) % twoPi;
     } else {
       const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
       const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
@@ -3422,7 +3448,7 @@ function updateEnemies(dt) {
     }
 
     const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > enemy.group.position.y) {
+    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') && ballVelocity < 0 && ball.position.y > getEnemyWorldPosition(enemy).y) {
       if (enemy.type === 'turtle') applyDamage();
       if (enemy.type === 'porcupine' && enemy.spikesOut) {
         applyDamage();
@@ -3566,7 +3592,7 @@ function updateShockwaves(dt) {
     for (let e = enemies.length - 1; e >= 0; e -= 1) {
       const enemy = enemies[e];
       if (shockwave.damagedEnemies.has(enemy)) continue;
-      const pos = enemy.type === 'pillarWorm' ? enemy.collisionPosition : enemy.group.position;
+      const pos = getEnemyWorldPosition(enemy);
       const effectiveRadius = Math.max(shockwave.radius, previousRadius) + enemy.collisionRadius + 0.35;
       if (pos.distanceToSquared(shockwave.position) <= effectiveRadius * effectiveRadius) {
         shockwave.damagedEnemies.add(enemy);
@@ -4128,6 +4154,7 @@ const _ballLeftCollider = new THREE.Vector3();
 const _ballRightCollider = new THREE.Vector3();
 const _enemyLocalPosition = new THREE.Vector3();
 const _enemyFallLocalPosition = new THREE.Vector3();
+const _enemyWorldPosition = new THREE.Vector3();
 const _floaterWorldPos = new THREE.Vector3();
 const _enemySegmentWorldPosition = new THREE.Vector3();
 const _acidSnailBodyWorldPosition = new THREE.Vector3();
@@ -5081,6 +5108,18 @@ twistBOnButton.addEventListener('click', () => {
   twistBMode = true;
   twistBOnButton.classList.add('active');
   twistBOffButton.classList.remove('active');
+});
+
+flyingModeBOffButton.addEventListener('click', () => {
+  flyingModeB = false;
+  flyingModeBOffButton.classList.add('active');
+  flyingModeBOnButton.classList.remove('active');
+});
+
+flyingModeBOnButton.addEventListener('click', () => {
+  flyingModeB = true;
+  flyingModeBOnButton.classList.add('active');
+  flyingModeBOffButton.classList.remove('active');
 });
 
 shopBulletBtn.addEventListener('click', buyShopBullet);
