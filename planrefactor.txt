@@ -1,0 +1,390 @@
+PLAN DE REFACTOR DE POGOMACHINE
+
+Objetivo
+Separar src/main.js en modulos claros para que deje de ser un monolito. El nuevo main.js debe quedar como composition root: crear renderer/scene, crear estado, inicializar sistemas, registrar eventos y ejecutar el loop. La logica de enemigos, fisicas, plataformas, shooting, pickups, UI, tienda y leaderboard debe vivir en modulos dedicados.
+
+Restriccion solicitada
+En esta etapa solo se genera este documento. No se debe cambiar codigo fuente todavia.
+
+Decision funcional importante
+Eliminar el modo AR durante la refactorizacion. No moverlo a otro modulo. Debe desaparecer del producto para reducir complejidad, dependencias WebXR y ramas especiales del loop.
+
+
+1. Estado actual observado
+
+Archivos ya existentes
+- src/main.js: contiene casi todo el juego. Actualmente ronda 5700 lineas.
+- src/core/constants.js: constantes numericas globales de gameplay y geometria.
+- src/core/utils.js: utilidades pequeñas de geometria/tile angles.
+- src/core/state.js: existe pero no esta integrado con main.js.
+- src/systems/input.js: input normal de pointer/keyboard, ya parcialmente separado.
+- src/systems/audio.js: audio ya separado.
+- src/systems/ui.js: helpers minimos de hearts/coins.
+- src/data/colors.js: paleta.
+- src/data/balance.js: valores de economia/progresion.
+
+Responsabilidades mezcladas dentro de main.js
+- Bootstrap Three.js: scene, camera, renderer, lights, DOM lookup.
+- Estado mutable global: vida, monedas, score, ball velocity, flags, pools, arrays de entidades, opciones.
+- Geometrias y materiales compartidos: ball, bullets, enemies, platforms, crates, saws, lasers, particles.
+- Plataformas: creacion de tiles, gaps, shop tile, traps, reciclado, band index, tile flash, cracks.
+- Enemigos: fabricas de meshes, spawn rules, movimiento, colisiones, muerte, split, flash states.
+- Obstaculos: cannons, pillar spikes, saw blades, laser rings, spike traps.
+- Fisicas/colisiones: ball/platform, underside, bullets vs tiles/enemies/crates/gold/cannons, enemy contact, hazards.
+- Shooting: machinegun, shotgun, ammo, reload, fire cooldown, bullets.
+- Pickups/effects: coins, bounce cubes, floating texts, particles, shockwaves.
+- UI/opciones/tienda/rewards/leaderboard: DOM, event listeners, JSONBin persistence.
+- Modos de input: input normal, Steam Deck mode, fullscreen/pointer lock/gamepad.
+- AR mode: WebXR, reticle, AR tower, AR physics, haptics, controller events, alternate render path.
+- Game lifecycle: resetGame, startLevel, completeLevel, endGame, main animate loop.
+
+Zonas relevantes de main.js
+- Lineas 85-180 aprox: scene/camera/renderer y DOM selectors.
+- Lineas 180-410 aprox: estado global, arrays, geometrias/materiales.
+- Lineas 451-759 aprox: plataformas, traps, crates, gold blocks, pillar spikes, floaters.
+- Lineas 761-1909 aprox: meshes y spawn/update rules de enemigos.
+- Lineas 1911-2219 aprox: ammo UI, options, level UI, pause, Steam Deck setup.
+- Lineas 2220-2459 aprox: Steam Deck input y shooting.
+- Lineas 2461-3870 aprox: bullets, effects, pickups, collisions, hazards, enemies update.
+- Lineas 3888-4380 aprox: floating text, clear/start/reset/end, leaderboard, powerups, shop, rewards.
+- Lineas 4382-4754 aprox: temporary vectors, debug collision, platform indexing, platform collisions, camera/tile flash.
+- Lineas 4756-5267 aprox: AR mode completo. Esta zona debe eliminarse.
+- Lineas 5270-5701 aprox: event listeners, input setup, resize, animate loop, initial boot.
+
+
+2. Problemas principales a resolver
+
+Acoplamiento por estado global
+Muchas funciones dependen directamente de variables globales como scene, world, ball, platforms, enemies, bullets, score, coins, hp, currentLevel, timeScale y DOM nodes. Si se extraen funciones sin una estrategia de contexto, se generaran imports circulares o listas enormes de parametros.
+
+Orden de update implicito
+El loop tiene un orden sensible: shooting, powerups, fisica de ball, scene matrix, colisiones, hazards, bullets, enemies, pickups/effects, recycle, camera. Ese orden debe conservarse durante la migracion.
+
+Ownership de objetos Three.js
+Cada sistema crea meshes/materiales y tambien los destruye. Si se separa mal, habra leaks o meshes huerfanos. El modulo que crea una entidad debe documentar como se destruye.
+
+UI y gameplay mezclados
+Varias acciones de gameplay actualizan DOM directamente. Ejemplos: score, coins, ammo, level progress, shop. El plan debe introducir una capa UI que reciba estado o eventos.
+
+AR duplica mundo y render path
+AR mantiene arScene, arRoot, arPlatforms, arBall, arBullets, WebXR session y branch especial en animate. Como se va a eliminar, conviene hacerlo antes de extraer el loop para reducir superficie.
+
+
+3. Arquitectura objetivo propuesta
+
+src/main.js
+- Composition root de 150-300 lineas aprox.
+- Crea renderer, scene, camera.
+- Crea gameContext.
+- Inicializa sistemas.
+- Registra listeners.
+- Ejecuta renderer.setAnimationLoop(game.update).
+
+src/game/createGame.js
+- Construye el contexto del juego.
+- Devuelve { update, resetGame, startLevel, destroy }.
+- Conecta todos los sistemas sin que main.js conozca detalles internos.
+
+src/game/context.js
+- Define createGameContext({ scene, camera, renderer, dom }).
+- Agrupa referencias compartidas:
+  state, refs, entities, materials, geometries, services, ui, input.
+- Evita imports circulares: los sistemas reciben ctx como parametro.
+
+src/game/state.js
+- Reemplaza o integra src/core/state.js.
+- Estado serializable o semi-serializable del juego: score, hp, coins, level, flags, timers, options, weapons, powerups.
+- No deberia crear meshes ni acceder a DOM.
+
+src/render/scene.js
+- createRenderer, createScene, createCamera, createLights, resizeRenderer.
+- Inicializa Three.js desktop solamente.
+- Al eliminar AR, quitar renderer.xr.enabled = true.
+
+src/render/assets.js
+- Geometrias y materiales compartidos.
+- createGameAssets(colors, constants).
+- Responsable de dispose global al destruir juego.
+
+src/render/effects.js
+- Particles, floating texts, shockwaves, coin pickup animation screen-space.
+- API sugerida: spawnExplosion, spawnBulletImpact, spawnFloatingText, updateEffects, clearEffects.
+
+src/systems/input.js
+- Mantener input normal y mover aqui Steam Deck mode o separarlo en steamDeckInput.js.
+- API sugerida: setupInputListeners(ctx), setupSteamDeckMode(ctx).
+- Input debe escribir intenciones: rotateDelta, shootingHeld, selectedWeapon, pauseRequested.
+- No deberia modificar score, enemies ni plataformas.
+
+src/systems/steamDeckInput.js
+- Fullscreen API, Pointer Lock API, Gamepad API.
+- Maneja mouse relative movement y held fire con right trigger o left click.
+- Expone updateSteamDeckInput(ctx) y cleanup.
+
+src/systems/shooting.js
+- Machinegun, shotgun, ammo, bullets, fire cooldown.
+- API sugerida: startShooting(ctx, source), stopShooting(ctx), updateShooting(ctx, dt), reloadAmmo(ctx), clearBullets(ctx).
+- Crear bullets y pasar colisiones a physics/collisions o recibir callbacks.
+
+src/systems/physics.js
+- Integracion de ball velocity/gravity/terminalVelocity.
+- updateBallPhysics(ctx, dt).
+- Funciones puras donde sea posible: getPlayerHitboxRadius, getBallColliderPositions.
+
+src/systems/collisions.js
+- Ball vs platforms, bullets vs platforms/enemies/crates/gold/cannons, ball vs enemies/hazards.
+- API sugerida: handleBallCollisions(ctx, previousY), updateBulletCollisions(ctx), getTileAtWorldPoint(ctx, platform, point).
+- Mantener aqui temporary vectors privados para evitar allocations.
+
+src/entities/platforms.js
+- createPlatform, recyclePlatforms, clearPlatforms, platform band index, tile flash, cracks.
+- API sugerida: createPlatformSystem(ctx) con methods createPlatform, updateTileFlashes, recycle, clear.
+- Debe depender de enemies/spawners via callbacks para no importar enemies directamente.
+
+src/entities/enemies/index.js
+- Registro central de tipos de enemigos.
+- Exporta spawn/update/damage/kill/clear.
+
+src/entities/enemies/meshes.js
+- createBatMesh, createWormMesh, createTurtleMesh, createJellyfishMesh, createPufferBombMesh, createExplosiveMushroomMesh, createPorcupineMesh, createAcidSnailMesh.
+
+src/entities/enemies/spawn.js
+- maybeSpawnEnemiesForSection, maybeSpawnWorms, initial enemies, splitting.
+- Reglas de spawn y dificultad.
+
+src/entities/enemies/update.js
+- updateEnemies, positionEnemy, ground enemy falling.
+
+src/entities/enemies/combat.js
+- damageEnemy, killEnemyAt, removeEnemyAt, getBallEnemyContact.
+
+src/entities/obstacles.js
+- Cannons, saw blades, pillar spikes, pillar laser rings, spike traps.
+- Si crece, dividir en obstacles/cannons.js, obstacles/sawBlades.js, obstacles/spikes.js, obstacles/laserRings.js.
+
+src/entities/pickups.js
+- Coins, bounce cubes, crates, gold blocks.
+- Alternativa: crates.js, goldBlocks.js, bounceCubes.js, coinPickups.js si el archivo queda grande.
+
+src/systems/levels.js
+- getLevelTarget, getLevelInfo, startLevel, completeLevel, resetLevel counters.
+- Orquesta platform generation y level-specific spawns.
+
+src/systems/gameLifecycle.js
+- resetGame, endGame, pause, damage, powerups.
+- Puede dividirse en powerups.js y damage.js si queda grande.
+
+src/systems/shop.js
+- Shop state/actions: openShop, closeShop, buyShopBullet, buyShopHp, buyShopArmor, buyShopInvuln, buyShopPiercing, buyShopVampiric, buyShopComboShield.
+
+src/systems/leaderboard.js
+- JSONBin fetch/load/save/submit/rank/fetchLeaderboard.
+- Mover JSONBIN constants fuera de main.js.
+- Nota: hoy la access key esta en frontend. No resolver en este refactor salvo decision separada, pero documentar riesgo.
+
+src/ui/dom.js
+- query/selectors de DOM.
+- Devuelve objeto ui con referencias.
+
+src/ui/hud.js
+- updateHeartsUI, updateCoinsUI, updateAmmoUI, updateWeaponUI, updateLevelUI, syncOptionsPanel, updateBallVisual si se mantiene visual UI-like.
+
+src/ui/events.js
+- Wire de botones/panels/options/rewards/shop/leaderboard.
+- No implementar logica de gameplay; solo llama actions del contexto.
+
+src/debug/collisionDebug.js
+- Debug panel, marker, ring, updateCollisionDebug.
+
+
+4. Eliminacion de AR
+
+Eliminar de index.html
+- Boton #ar-mode-button.
+- Div #ar-status.
+
+Eliminar de src/style.css
+- Estilos #ar-mode-button.
+- Estilos #ar-status.
+- Reglas body.ar-active.
+- Media queries relacionadas con AR.
+- Ajustar #version-label si su posicion dependia de AR mode.
+
+Eliminar de src/main.js
+- renderer.xr.enabled = true.
+- DOM refs arModeButton y arStatusEl.
+- Todo el bloque AR: arScene, arRoot, arTowerRotator, arBullets, arPlatforms, ar state, ar constants, ar reticle, AR lights.
+- Funciones setArStatus, setDesktopVisible si quedan solo para AR, disposeGroupChildren si solo se usaba para AR.
+- createArPlatform, buildArTower, placeArTowerFromReticle, updateArPillarClip, recycleArPlatforms.
+- fireArBullet, updateArShooting, startArShooting, stopArShooting.
+- getArControllerLocalX, arRightHapticClick, updateArRotationHaptics, getArControllerDistance.
+- startArScaleAdjust, stopArScaleAdjust, updateArScaleAdjust, updateArGripRotation, updateArReticle, updateArBall, updateArBullets, updateArMode.
+- startArMode, endArMode.
+- renderer.xr.getController loop y controller event listeners.
+- arModeButton click listener.
+- Branch inicial de animate que renderiza arScene.
+
+Resultado esperado de esta fase
+- El juego solo tiene render path desktop.
+- animate siempre actualiza/renderiza scene normal.
+- Steam Deck mode sigue disponible.
+- Build debe pasar antes de empezar a mover modulos.
+
+
+5. Orden recomendado de migracion
+
+Fase 0: Baseline y seguridad
+- Crear una checklist manual de comportamiento antes de mover codigo: iniciar juego, rotar torre, disparar, shotgun, Steam Deck, pausa/opciones, tienda, leaderboard, completar nivel, morir/reset.
+- Ejecutar npm run build antes y despues de cada fase.
+- Hacer cambios pequenos y testeables, no intentar mover todo main.js de una vez.
+
+Fase 1: Eliminar AR
+- Aplicar la eliminacion descrita arriba.
+- Verificar que no quedan referencias a arMode, arStatus, renderer.xr, arScene ni body.ar-active.
+- Verificar que Steam Deck no dependia de AR.
+
+Fase 2: Crear GameContext sin mover logica aun
+- Crear src/game/context.js.
+- Mover ahi el estado global y colecciones gradualmente, o crear un ctx que apunte a las variables existentes como paso intermedio.
+- Objetivo: nuevas extracciones reciben ctx y no importan main.js.
+
+Fase 3: Extraer render/assets
+- Mover scene/camera/renderer/lights a src/render/scene.js.
+- Mover geometrias/materiales a src/render/assets.js.
+- main.js importa createSceneBundle y createGameAssets.
+- Verificar que dispose sigue funcionando.
+
+Fase 4: Extraer UI/DOM/events
+- Mover selectors a src/ui/dom.js.
+- Mover updateHeartsUI/updateCoinsUI/ammo/level/options a src/ui/hud.js.
+- Mover listeners de botones a src/ui/events.js.
+- Mantener actions en ctx para evitar que ui importe sistemas internos.
+
+Fase 5: Extraer input normal y Steam Deck
+- Dejar src/systems/input.js solo para input normal.
+- Crear src/systems/steamDeckInput.js para fullscreen/pointer lock/gamepad/mouse held fire.
+- Input escribe en ctx.input o llama actions publicas como ctx.actions.startShooting('steamDeckFire').
+
+Fase 6: Extraer shooting y bullets
+- Mover fireMachinegun, fireShotgun, fireCurrentWeapon, startShooting, stopShooting, updateShooting, updateBullets, clearBullets, reloadAmmo.
+- Al principio puede seguir llamando collision callbacks desde ctx.collisions.
+- Luego separar updateBullets en movimiento y collision processing si hace falta.
+
+Fase 7: Extraer effects/pickups simples
+- Mover particles, floatingTexts, shockwaves a render/effects.js.
+- Mover coinPickups y bounceCubes a entities/pickups.js o submodulos.
+- Verificar que score/coins se actualizan por actions centralizadas.
+
+Fase 8: Extraer platforms
+- Mover makeCrackLine/makeGrayCrackLines, createPlatform, tile color, spike trap creation, platform band index, getTileAtWorldPoint, recyclePlatforms, updateTileFlashes.
+- Mantener callbacks para maybeSpawnEnemiesForSection y maybeSpawnCannon.
+- Verificar generacion de nivel y shop tile.
+
+Fase 9: Extraer enemies
+- Primero mover mesh factories a enemies/meshes.js, es el cambio menos riesgoso.
+- Despues mover spawn rules a enemies/spawn.js.
+- Despues mover updateEnemies/positionEnemy/combat a enemies/update.js y enemies/combat.js.
+- Mantener arrays en ctx.entities.enemies.
+
+Fase 10: Extraer obstacles
+- Mover cannons, saw blades, pillar spikes, pillar laser rings, spike traps.
+- Si quedan dependencias cruzadas con collisions, pasar callbacks o services.
+
+Fase 11: Extraer physics/collisions
+- Mover ball physics y collision helpers.
+- Mantener el orden del loop intacto.
+- Este paso debe hacerse despues de platforms/enemies porque collisions necesita APIs claras de esos sistemas.
+
+Fase 12: Extraer lifecycle/levels/shop/leaderboard
+- Mover startLevel/resetGame/endGame/completeLevel a systems/gameLifecycle.js y systems/levels.js.
+- Mover shop a systems/shop.js.
+- Mover JSONBin leaderboard a systems/leaderboard.js.
+
+Fase 13: Reducir main.js
+- main.js deberia quedar solo con imports, create app, setAnimationLoop, resize cleanup si aplica.
+- Eliminar funciones residuales y variables globales que hayan quedado sin usar.
+
+
+6. API de contexto sugerida
+
+ctx.scene
+ctx.world
+ctx.camera
+ctx.renderer
+ctx.dom
+ctx.assets
+ctx.state
+ctx.entities
+ctx.systems
+ctx.actions
+
+ctx.state ejemplo
+- score, hp, coins, currentLevel, platformsPassedThisLevel.
+- ballVelocity, gravity, terminalVelocity, bounceVelocity.
+- isPaused, isGameOver, isLevelComplete.
+- timeScale, damageSlowdownTimer, grayscaleAmount.
+- options: impulseMode, controlMode, twistBMode, flyingModeB, fireInterval, shotgunFireInterval, maxAmmo, etc.
+- powerups: invulnerabilityTimer, hasShield, pendingInvulnerability, pendingShield, piercingBulletsUnlocked, vampiricLifeUnlocked, comboShieldUnlocked.
+- input: drag, touchPointerIds, steamDeckModeActive, steamDeckRightTriggerHeld, steamDeckLeftMouseHeld.
+
+ctx.entities ejemplo
+- platforms, bullets, enemies, particles, floatingTexts, crates, goldBlocks, coinPickups, cannons, shockwaves, pillarLaserRings, bounceCubes, pillarSpikes, spikeTraps, sawBlades, floaters, acidPuddles.
+
+ctx.actions ejemplo
+- startShooting, stopShooting, reloadAmmo.
+- applyDamage, completeLevel, resetGame, startLevel, endGame.
+- updateCoins, updateScore, spawnFloatingText.
+- openShop, closeShop, buyShopItem.
+
+
+7. Reglas para evitar un nuevo monolito
+
+- Ningun modulo de entidad debe consultar DOM directamente.
+- Ningun modulo UI debe mutar arrays de entidades directamente.
+- Ningun modulo debe importar main.js.
+- Evitar singletons globales nuevos. Preferir ctx pasado por parametro.
+- El modulo que crea meshes debe exponer clear/dispose o documentar ownership.
+- Mantener temporary vectors dentro del modulo que los usa para evitar allocations sin compartir demasiada memoria global.
+- Evitar imports circulares: si A necesita llamar B, usar callbacks/actions en ctx.
+- Refactorizar por movimiento mecanico primero; mejorar diseno despues de tener build verde.
+
+
+8. Verificacion por fase
+
+Comandos
+- npm run build despues de cada fase.
+- Si se agregan tests mas adelante, crear tests unitarios para utils puros: angleInArc, platform band index, getAngularDistance, spawn rules deterministas con RNG inyectado.
+
+Checklist manual minima
+- El juego carga y muestra HUD.
+- Drag normal rota la torre.
+- Click/release normal dispara segun modo actual.
+- Steam Deck entra en fullscreen/pointer lock.
+- Steam Deck rota con movimiento relativo.
+- Steam Deck dispara manteniendo right trigger o click izquierdo.
+- Options abre/cierra y modifica valores.
+- Bullets impactan enemigos, plataformas grises, crates, gold blocks y cannons.
+- Ball rebota en tiles azules, recibe damage en rojos y hazards.
+- Shop abre en tile shop y compras funcionan.
+- Level complete muestra rewards y next level.
+- Game over y leaderboard siguen funcionando.
+
+
+9. Riesgos principales
+
+- Cambiar el orden del loop puede alterar gameplay aunque el build pase.
+- Mover collisions antes de platforms/enemies puede multiplicar dependencias.
+- Separar UI tarde puede hacer que sistemas extraidos sigan tocando DOM.
+- Las funciones de dispose son faciles de romper y pueden dejar memory leaks.
+- JSONBin access key esta en cliente; no es parte directa del refactor, pero queda como riesgo de seguridad existente.
+- Existing src/core/state.js puede confundirse con el nuevo estado real. Conviene integrarlo o eliminarlo cuando se migre, no dejar dos fuentes de verdad.
+
+
+10. Resultado final esperado
+
+- main.js pequeno, legible y sin logica de gameplay interna.
+- AR eliminado completamente.
+- Sistemas separados por responsabilidad.
+- Dependencias claras mediante ctx/actions.
+- Mismo comportamiento gameplay que antes del refactor, salvo la eliminacion intencional del modo AR.
+- Base mas preparada para agregar enemigos, powerups, modos de input o tests sin seguir inflando main.js.
