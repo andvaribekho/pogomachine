@@ -32,147 +32,58 @@ import {
   playAcidBurnSound, startInvulnerabilityMusic, updateInvulnerabilityMusic,
   stopInvulnerabilityMusic,
 } from './systems/audio.js';
-import { updateHeartsUI, updateCoinsUI } from './systems/ui.js';
+import {
+  updateHeartsUI, updateCoinsUI, rebuildAmmoUI as rebuildAmmoSegments,
+  updateAmmoUI as updateAmmoSegments, updateWeaponUI as updateWeaponLabel,
+  updateShopUI as renderShopUI, updateLevelCompleteUI as renderLevelCompleteUI,
+} from './systems/ui.js';
 import { setupInputListeners } from './systems/input.js';
+import { loadScores, submitScoreToLeaderboard, getPlayerRank } from './systems/leaderboard.js';
+import { setupSteamDeckMode } from './systems/steamDeckInput.js';
+import { integrateBallPhysics } from './systems/physics.js';
+import {
+  createShootingSystem,
+} from './systems/shooting.js';
+import { parseClampedFloat, parseClampedAbsFloat, parseClampedInt } from './systems/options.js';
+import { getLevelInfo as makeLevelInfo, getLevelTarget as getTargetForLevel } from './systems/levels.js';
+import { createSceneBundle, resizeScene } from './render/scene.js';
+import {
+  spawnExplosion as spawnExplosionParticles,
+  spawnBulletImpact as spawnBulletImpactParticles,
+} from './render/effects.js';
+import {
+  platformY, clearPlatformBandIndex, registerPlatformInBand,
+  unregisterPlatformFromBand, getPlatformsNearY,
+} from './entities/platforms.js';
+import { isWormTile, isGroundEnemy } from './entities/enemies.js';
+import { createCoinPickupSystem } from './entities/coinPickups.js';
+import { createBounceCubeSystem } from './entities/bounceCubes.js';
+import { createCrateSystem } from './entities/crates.js';
+import { createGoldBlockSystem } from './entities/goldBlocks.js';
+import { getDomRefs } from './ui/dom.js';
+import { createCollisionDebug } from './debug/collisionDebug.js';
 
-const JSONBIN_BIN_ID = '69fd1176adc21f119a6b5071';
-const JSONBIN_ACCESS_KEY = '$2a$10$rijn8M9JPA3wdQtJMc2IW.I3kZD/s1BYr1SePS8O9lrB2x78LhL92';
-
-async function jsonbinFetch(endpoint, options = {}) {
-  const url = `https://api.jsonbin.io/v3/${endpoint}`;
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Access-Key': JSONBIN_ACCESS_KEY
-  };
-  const response = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
-  return response.json();
-}
-
-async function loadScores() {
-  try {
-    const data = await jsonbinFetch(`b/${JSONBIN_BIN_ID}/latest`);
-    return data.record?.scores || [];
-  } catch {
-    return [];
-  }
-}
-
-async function saveScores(scores) {
-  await jsonbinFetch(`b/${JSONBIN_BIN_ID}`, {
-    method: 'PUT',
-    body: JSON.stringify({ scores })
-  });
-}
-
-async function submitScoreToLeaderboard(playerName, playerScore) {
-  const scores = await loadScores();
-  scores.push({
-    name: playerName.trim().toUpperCase().substring(0, 12),
-    score: playerScore,
-    timestamp: Date.now()
-  });
-  scores.sort((a, b) => b.score - a.score);
-  scores.splice(20);
-  await saveScores(scores);
-}
-
-async function getPlayerRank(playerName, playerScore) {
-  const scores = await loadScores();
-  const rank = scores.findIndex(s => s.name === playerName.trim().toUpperCase().substring(0, 12) && s.score === playerScore) + 1;
-  return rank > 0 ? rank : scores.length + 1;
-}
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xeef7ff);
-
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 240);
-camera.position.set(0, 6.2, 10.5);
-camera.lookAt(0, -2.2, 0);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.xr.enabled = true;
-document.body.appendChild(renderer.domElement);
-
-const scoreEl = document.querySelector('#score');
-const heartsEl = document.querySelector('#hearts');
-const coinsEl = document.querySelector('#coins');
-const levelLabelEl = document.querySelector('#level-label');
-const progressFillEl = document.querySelector('#progress-fill');
-const progressLabelEl = document.querySelector('#progress-label');
-const gameOverEl = document.querySelector('#game-over');
-const finalScoreEl = document.querySelector('#final-score');
-const ammoMagazineEl = document.querySelector('#ammo-magazine');
-const weaponIndicatorEl = document.querySelector('#weapon-indicator');
-const pauseButton = document.querySelector('#pause-button');
-const pausePanelEl = document.querySelector('#pause-panel');
-const closePanelButton = document.querySelector('#close-panel-button');
-const impulseInput = document.querySelector('#impulse-input');
-const fireIntervalInput = document.querySelector('#fire-interval-input');
-const shotgunSpreadInput = document.querySelector('#shotgun-spread-input');
-const shotgunIntervalInput = document.querySelector('#shotgun-interval-input');
-const maxAmmoInput = document.querySelector('#max-ammo-input');
-const gravityInput = document.querySelector('#gravity-input');
-const terminalVelocityInput = document.querySelector('#terminal-velocity-input');
-const stompImpulseInput = document.querySelector('#stomp-impulse-input');
-const hitboxScaleInput = document.querySelector('#hitbox-scale-input');
-const cannonChargeInput = document.querySelector('#cannon-charge-input');
-const cannonCooldownInput = document.querySelector('#cannon-cooldown-input');
-const laserOnInput = document.querySelector('#laser-on-input');
-const laserOffInput = document.querySelector('#laser-off-input');
-const coinAttractionInput = document.querySelector('#coin-attraction-input');
-const levelCompleteEl = document.querySelector('#level-complete');
-const completeSummaryEl = document.querySelector('#complete-summary');
-const rewardHpButton = document.querySelector('#reward-hp');
-const rewardAmmoButton = document.querySelector('#reward-ammo');
-const rewardPiercingButton = document.querySelector('#reward-piercing');
-const rewardVampiricButton = document.querySelector('#reward-vampiric');
-const rewardComboShieldButton = document.querySelector('#reward-combo-shield');
-const buyInvulnerabilityButton = document.querySelector('#buy-invulnerability');
-const buyShieldButton = document.querySelector('#buy-shield');
-const shopStatusEl = document.querySelector('#shop-status');
-const nextLevelButton = document.querySelector('#next-level-button');
-const extraButton = document.querySelector('#extra-button');
-const extraPanelEl = document.querySelector('#extra-panel');
-const closeExtraButton = document.querySelector('#close-extra-button');
-const impulseAButton = document.querySelector('#impulse-a-btn');
-const impulseBButton = document.querySelector('#impulse-b-btn');
-const impulseCButton = document.querySelector('#impulse-c-btn');
-const impulseBResetInput = document.querySelector('#impulse-b-reset-input');
-const impulseBShotgunInput = document.querySelector('#impulse-b-shotgun-input');
-const impulseBResetLabel = document.querySelector('#impulse-b-reset-label');
-const impulseBShotgunLabel = document.querySelector('#impulse-b-shotgun-label');
-const impulseCFactorLabel = document.querySelector('#impulse-c-factor-label');
-const impulseCFactorInput = document.querySelector('#impulse-c-factor-input');
-const controlAButton = document.querySelector('#control-a-btn');
-const controlBButton = document.querySelector('#control-b-btn');
-const twistBOffButton = document.querySelector('#twist-b-off-btn');
-const twistBOnButton = document.querySelector('#twist-b-on-btn');
-const flyingModeBOffButton = document.querySelector('#flying-mode-b-off-btn');
-const flyingModeBOnButton = document.querySelector('#flying-mode-b-on-btn');
-const shopPanelEl = document.querySelector('#shop-panel');
-const shopCoinsEl = document.querySelector('#shop-coins');
-const shopBulletBtn = document.querySelector('#shop-bullet');
-const shopHpBtn = document.querySelector('#shop-hp');
-const shopArmorBtn = document.querySelector('#shop-armor');
-const shopInvulnBtn = document.querySelector('#shop-invuln');
-const shopPiercingBtn = document.querySelector('#shop-piercing');
-const shopVampiricBtn = document.querySelector('#shop-vampiric');
-const shopComboShieldBtn = document.querySelector('#shop-combo-shield');
-const closeShopButton = document.querySelector('#close-shop-button');
-const arModeButton = document.querySelector('#ar-mode-button');
-const arStatusEl = document.querySelector('#ar-status');
-const leaderboardPanelEl = document.querySelector('#leaderboard-panel');
-const leaderboardNameSection = document.querySelector('#leaderboard-name-section');
-const leaderboardNameInput = document.querySelector('#leaderboard-name-input');
-const leaderboardSubmitBtn = document.querySelector('#leaderboard-submit-btn');
-const leaderboardScoreLabel = document.querySelector('#leaderboard-score-label');
-const leaderboardSubmittedEl = document.querySelector('#leaderboard-submitted');
-const leaderboardRankMsg = document.querySelector('#leaderboard-rank-msg');
-const leaderboardListEl = document.querySelector('#leaderboard-list');
-const leaderboardCloseBtn = document.querySelector('#leaderboard-close-btn');
+const { scene, camera, renderer } = createSceneBundle();
+const {
+  scoreEl, heartsEl, coinsEl, levelLabelEl, progressFillEl, progressLabelEl,
+  gameOverEl, finalScoreEl, ammoMagazineEl, weaponIndicatorEl, pauseButton,
+  steamDeckButton, pausePanelEl, closePanelButton, impulseInput, fireIntervalInput,
+  shotgunSpreadInput, shotgunIntervalInput, maxAmmoInput, gravityInput,
+  terminalVelocityInput, stompImpulseInput, hitboxScaleInput, cannonChargeInput,
+  cannonCooldownInput, laserOnInput, laserOffInput, coinAttractionInput,
+  levelCompleteEl, completeSummaryEl, rewardHpButton, rewardAmmoButton,
+  rewardPiercingButton, rewardVampiricButton, rewardComboShieldButton,
+  buyInvulnerabilityButton, buyShieldButton, shopStatusEl, nextLevelButton,
+  extraButton, extraPanelEl, closeExtraButton, impulseAButton, impulseBButton,
+  impulseCButton, impulseBResetInput, impulseBShotgunInput, impulseBResetLabel,
+  impulseBShotgunLabel, impulseCFactorLabel, impulseCFactorInput, controlAButton,
+  controlBButton, twistBOffButton, twistBOnButton, flyingModeBOffButton,
+  flyingModeBOnButton, shopPanelEl, shopCoinsEl, shopBulletBtn, shopHpBtn,
+  shopArmorBtn, shopInvulnBtn, shopPiercingBtn, shopVampiricBtn,
+  shopComboShieldBtn, closeShopButton, leaderboardPanelEl, leaderboardNameSection,
+  leaderboardNameInput, leaderboardSubmitBtn, leaderboardScoreLabel,
+  leaderboardSubmittedEl, leaderboardRankMsg, leaderboardListEl, leaderboardCloseBtn,
+} = getDomRefs();
 
 let scoreSubmittedToLeaderboard = false;
 let leaderboardPendingClose = false;
@@ -609,88 +520,19 @@ function createPlatform(y, id, options = {}) {
 }
 
 function createCrate(platformGroup, angle, radius) {
-  const mesh = new THREE.Mesh(crateGeometry.clone(), crateMaterial.clone());
-  mesh.position.set(
-    Math.cos(angle) * radius,
-    platformThickness / 2 + 0.22,
-    Math.sin(angle) * radius
-  );
-  mesh.rotation.y = angle;
-  platformGroup.add(mesh);
-  crates.push({ mesh, platformGroup, value: 5, broken: false, falling: false, fallVelocity: 0 });
+  crateSystem.createCrate(platformGroup, angle, radius);
 }
 
 function createGoldBlock(platformData, tile) {
-  const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const position = new THREE.Vector3(
-    Math.cos(angle) * gameplayLaneRadius,
-    platformThickness / 2 + goldBlockHalfSize,
-    Math.sin(angle) * gameplayLaneRadius
-  );
-  if (!isGoldBlockPositionClear(platformData, position)) return false;
-
-  const mesh = new THREE.Mesh(goldBlockGeometry.clone(), goldBlockMaterial.clone());
-  mesh.position.copy(position);
-  mesh.rotation.y = angle + Math.PI * 0.25;
-  mesh.castShadow = true;
-  platformData.group.add(mesh);
-  goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, sparkleTimer: Math.random() * 0.12, broken: false, falling: false, fallVelocity: 0 });
-  return true;
+  return goldBlockSystem.createGoldBlock(platformData, tile);
 }
 
 function isGoldBlockPositionClear(platformData, localPosition) {
-  const worldPosition = localPosition.clone();
-  platformData.group.localToWorld(worldPosition);
-  const minDistance = goldBlockHalfSize + 0.45;
-
-  for (const crate of crates) {
-    if (crate.broken || crate.platformGroup !== platformData.group) continue;
-    crate.mesh.getWorldPosition(_crateWorldPosition);
-    if (_crateWorldPosition.distanceTo(worldPosition) < minDistance) return false;
-  }
-
-  for (const cannon of cannons) {
-    if (cannon.platformData !== platformData) continue;
-    if (getCannonWorldPosition(cannon).distanceTo(worldPosition) < minDistance) return false;
-  }
-
-  for (const enemy of enemies) {
-    const enemyPosition = getEnemyWorldPosition(enemy);
-    if (Math.abs(enemyPosition.y - worldPosition.y) > goldBlockSize + 0.6) continue;
-    if (enemyPosition.distanceToSquared(worldPosition) < minDistance * minDistance) return false;
-  }
-
-  for (const goldBlock of goldBlocks) {
-    if (goldBlock.platformData !== platformData || goldBlock.broken) continue;
-    const position = new THREE.Vector3();
-    goldBlock.mesh.getWorldPosition(position);
-    if (position.distanceTo(worldPosition) < minDistance) return false;
-  }
-
-  return true;
+  return goldBlockSystem.isGoldBlockPositionClear(platformData, localPosition);
 }
 
 function spawnGoldBlocksForLevel() {
-  const floorCandidates = platforms
-    .filter(platform => !platform.final)
-    .map(platform => ({
-      platform,
-      tiles: platform.tiles.filter(tile => !tile.broken && (tile.type === 'blue' || tile.type === 'gray')),
-    }))
-    .filter(candidate => candidate.tiles.length > 0)
-    .sort(() => Math.random() - 0.5);
-
-  let spawned = 0;
-  for (const candidate of floorCandidates) {
-    if (spawned >= goldBlocksPerLevel) break;
-    const tiles = [...candidate.tiles].sort(() => Math.random() - 0.5);
-    for (const tile of tiles) {
-      if (createGoldBlock(candidate.platform, tile)) {
-        spawned += 1;
-        break;
-      }
-    }
-  }
+  goldBlockSystem.spawnGoldBlocksForLevel();
 }
 
 function createPillarSpike(y, angle) {
@@ -1426,10 +1268,6 @@ function createSpikedBall(y, id) {
   enemies.push(enemy);
 }
 
-function isWormTile(tile) {
-  return !tile.broken && !tile.spikeTrap && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'gray' || tile.type === 'crackedBlue');
-}
-
 function isWormAngleValid(platformData, angle) {
   return platformData.tiles.some(tile => isWormTile(tile) && angleInArc((angle + twoPi) % twoPi, tile.start, tile.end));
 }
@@ -1443,10 +1281,6 @@ function isWormBodySupported(platformData, angle, radius, segmentSpacing = 0.24)
     if (!isWormAngleValid(platformData, backwardAngle)) return false;
   }
   return true;
-}
-
-function isGroundEnemy(enemy) {
-  return enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail';
 }
 
 function startGroundEnemyFall(enemy) {
@@ -1903,24 +1737,16 @@ if (id > 9 && platformData.tiles.length > 0 && Math.random() < 0.1 + difficulty 
 }
 
 function rebuildAmmoUI() {
-  ammoMagazineEl.replaceChildren();
-  ammoSegments = Array.from({ length: maxAmmo }, () => {
-    const segment = document.createElement('div');
-    segment.className = 'ammo-segment';
-    ammoMagazineEl.appendChild(segment);
-    return segment;
-  });
+  ammoSegments = rebuildAmmoSegments(ammoMagazineEl, maxAmmo);
   updateAmmoUI();
 }
 
 function updateAmmoUI() {
-  ammoSegments.forEach((segment, index) => {
-    segment.classList.toggle('filled', index < ammo);
-  });
+  updateAmmoSegments(ammoSegments, ammo);
 }
 
 function updateWeaponUI() {
-  weaponIndicatorEl.textContent = selectedWeapon === 'shotgun' ? 'Weapon: Shotgun' : 'Weapon: Machinegun';
+  updateWeaponLabel(weaponIndicatorEl, selectedWeapon);
 }
 
 function selectWeapon(weapon) {
@@ -1935,13 +1761,7 @@ function showReloadText() {
 }
 
 function reloadAmmo() {
-  if (ammo === maxAmmo) return false;
-
-  ammo = maxAmmo;
-  reloadFlashTimer = 0.2;
-  updateAmmoUI();
-  showReloadText();
-  return true;
+  return shooting.reloadAmmo();
 }
 
 function updateComboSprite() {
@@ -2007,34 +1827,22 @@ function resetCombo(showLoss = true) {
 }
 
 function setShootingImpulse(value) {
-  const nextValue = Number.parseFloat(value);
-  bulletImpulse = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0, 12)
-    : defaultBulletImpulse;
+  bulletImpulse = parseClampedFloat(value, 0, 12, defaultBulletImpulse);
   impulseInput.value = bulletImpulse.toFixed(1);
 }
 
 function setGravity(value) {
-  const nextValue = Number.parseFloat(value);
-  gravity = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, -40, 0)
-    : defaultGravity;
+  gravity = parseClampedFloat(value, -40, 0, defaultGravity);
   gravityInput.value = gravity.toFixed(1);
 }
 
 function setTerminalVelocity(value) {
-  const nextValue = Number.parseFloat(value);
-  terminalVelocity = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(Math.abs(nextValue), 1, 80)
-    : defaultTerminalVelocity;
+  terminalVelocity = parseClampedAbsFloat(value, 1, 80, defaultTerminalVelocity);
   terminalVelocityInput.value = terminalVelocity.toFixed(1);
 }
 
 function setStompImpulse(value) {
-  const nextValue = Number.parseFloat(value);
-  stompImpulse = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0, 20)
-    : defaultStompImpulse;
+  stompImpulse = parseClampedFloat(value, 0, 20, defaultStompImpulse);
   stompImpulseInput.value = stompImpulse.toFixed(1);
 }
 
@@ -2043,72 +1851,48 @@ function getPlayerHitboxRadius() {
 }
 
 function setPlayerHitboxScale(value) {
-  const nextValue = Number.parseFloat(value);
-  playerHitboxScale = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.1, 1)
-    : defaultPlayerHitboxScale;
+  playerHitboxScale = parseClampedFloat(value, 0.1, 1, defaultPlayerHitboxScale);
   hitboxScaleInput.value = playerHitboxScale.toFixed(2);
 }
 
 function setCannonChargeTime(value) {
-  const nextValue = Number.parseFloat(value);
-  cannonChargeTime = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.5, 10)
-    : defaultCannonChargeTime;
+  cannonChargeTime = parseClampedFloat(value, 0.5, 10, defaultCannonChargeTime);
   cannonChargeInput.value = cannonChargeTime.toFixed(1);
 }
 
 function setCannonCooldown(value) {
-  const nextValue = Number.parseFloat(value);
-  cannonCooldown = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0, 20)
-    : defaultCannonCooldown;
+  cannonCooldown = parseClampedFloat(value, 0, 20, defaultCannonCooldown);
   cannonCooldownInput.value = cannonCooldown.toFixed(1);
 }
 
 function setLaserRingOnTime(value) {
-  const nextValue = Number.parseFloat(value);
-  laserRingOnTime = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.2, 10)
-    : defaultLaserRingOnTime;
+  laserRingOnTime = parseClampedFloat(value, 0.2, 10, defaultLaserRingOnTime);
   laserOnInput.value = laserRingOnTime.toFixed(1);
 }
 
 function setLaserRingOffTime(value) {
-  const nextValue = Number.parseFloat(value);
-  laserRingOffTime = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.2, 10)
-    : defaultLaserRingOffTime;
+  laserRingOffTime = parseClampedFloat(value, 0.2, 10, defaultLaserRingOffTime);
   laserOffInput.value = laserRingOffTime.toFixed(1);
 }
 
 function setCoinAttractionRadius(value) {
-  const nextValue = Number.parseFloat(value);
-  coinAttractionRadius = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.1, 5)
-    : defaultCoinAttractionRadius;
+  coinAttractionRadius = parseClampedFloat(value, 0.1, 5, defaultCoinAttractionRadius);
   coinAttractionInput.value = coinAttractionRadius.toFixed(2);
 }
 
 function setShotgunSpreadAngle(value) {
-  const nextValue = Number.parseFloat(value);
-  shotgunSpreadAngle = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0, 25)
-    : defaultShotgunSpreadAngle;
+  shotgunSpreadAngle = parseClampedFloat(value, 0, 25, defaultShotgunSpreadAngle);
   shotgunSpreadInput.value = shotgunSpreadAngle.toFixed(1);
 }
 
 function setShotgunFireInterval(value) {
-  const nextValue = Number.parseFloat(value);
-  shotgunFireInterval = Number.isFinite(nextValue)
-    ? THREE.MathUtils.clamp(nextValue, 0.1, 3)
-    : defaultShotgunFireInterval;
+  shotgunFireInterval = parseClampedFloat(value, 0.1, 3, defaultShotgunFireInterval);
   shotgunIntervalInput.value = shotgunFireInterval.toFixed(2);
   if (isShooting && selectedWeapon === 'shotgun') fireCooldown = Math.min(fireCooldown, shotgunFireInterval);
 }
 
 function getShotUpwardVelocityCap() {
-  return Math.max(baseShotUpwardVelocityCap, bulletImpulse * 0.75);
+  return shooting.shotUpwardVelocityCap();
 }
 
 function syncOptionsPanel() {
@@ -2142,13 +1926,11 @@ function syncOptionsPanel() {
 }
 
 function getLevelTarget(level = currentLevel) {
-  return level * 10 + 10;
+  return getTargetForLevel(level);
 }
 
 function getLevelInfo() {
-  const target = getLevelTarget();
-  const progress = THREE.MathUtils.clamp(platformsPassedThisLevel / target, 0, 1);
-  return { level: currentLevel, target, progress };
+  return makeLevelInfo(currentLevel, platformsPassedThisLevel);
 }
 
 function updateLevelUI() {
@@ -2167,23 +1949,7 @@ function worldToScreen(position) {
 }
 
 function spawnCoinPickupAnimation(worldPosition, value = 5) {
-  const start = worldToScreen(worldPosition);
-  const targetRect = coinsEl.getBoundingClientRect();
-  const coin = document.createElement('div');
-  coin.className = 'coin-pickup';
-  coin.textContent = `+${value}`;
-  coin.style.left = `${start.x}px`;
-  coin.style.top = `${start.y}px`;
-  document.body.appendChild(coin);
-
-  requestAnimationFrame(() => {
-    coin.style.left = `${targetRect.left + targetRect.width / 2}px`;
-    coin.style.top = `${targetRect.top + targetRect.height / 2}px`;
-    coin.style.opacity = '0';
-    coin.style.transform = 'translate(-50%, -50%) scale(0.45)';
-  });
-
-  window.setTimeout(() => coin.remove(), 720);
+  coinPickupSystem.spawnCoinPickupAnimation(worldPosition, value);
 }
 
 function updatePersistentUI() {
@@ -2206,163 +1972,74 @@ function setPaused(paused) {
   }
 }
 
+const shooting = createShootingSystem({
+  scene,
+  ball,
+  ballRadius,
+  bullets,
+  bulletGeometry,
+  bulletMaterial,
+  bulletLifetime,
+  bulletSpeed,
+  baseShotUpwardVelocityCap,
+  getAmmo: () => ammo,
+  setAmmo: value => { ammo = value; },
+  getMaxAmmo: () => maxAmmo,
+  getIsShooting: () => isShooting,
+  setIsShooting: value => { isShooting = value; },
+  getFireCooldown: () => fireCooldown,
+  setFireCooldown: value => { fireCooldown = value; },
+  getSelectedWeapon: () => selectedWeapon,
+  getFireInterval: () => fireInterval,
+  getShotgunFireInterval: () => shotgunFireInterval,
+  getShotgunSpreadAngle: () => shotgunSpreadAngle,
+  getBulletImpulse: () => bulletImpulse,
+  getBallVelocity: () => ballVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  getImpulseMode: () => impulseMode,
+  getImpulseBResetSpeed: () => impulseBResetSpeed,
+  getImpulseBShotgunImpulse: () => impulseBShotgunImpulse,
+  getImpulseCFactor: () => impulseCfactor,
+  getNextShotId: () => nextShotId,
+  setNextShotId: value => { nextShotId = value; },
+  setReloadFlashTimer: value => { reloadFlashTimer = value; },
+  updateAmmoUI,
+  showReloadText,
+  playEmptyAmmoSound,
+  playShootSound,
+  isGameOver: () => isGameOver,
+  isPaused: () => isPaused,
+  isSteamDeckModeActive: () => steamDeckMode.isActive(),
+  isPiercingBulletsUnlocked: () => piercingBulletsUnlocked,
+  checkBulletEnemyHit,
+  checkBulletCrateHit,
+  checkBulletGoldBlockHit,
+  checkBulletCannonHit,
+  checkBulletPlatformHit,
+});
+
 function stopShooting() {
-  isShooting = false;
-  fireCooldown = 0;
+  shooting.stop();
 }
 
 function clearBullets() {
-  while (bullets.length) {
-    const bullet = bullets.pop();
-    bullet.mesh.removeFromParent();
-  }
+  shooting.clearBullets();
 }
 
 function getCurrentFireInterval() {
-  return selectedWeapon === 'shotgun' ? shotgunFireInterval : fireInterval;
+  return shooting.currentFireInterval();
 }
 
-function spawnBullet(velocity = new THREE.Vector3(0, -bulletSpeed, 0), shotId = 0) {
-  const mesh = new THREE.Mesh(bulletGeometry, bulletMaterial);
-  mesh.position.copy(ball.position);
-  mesh.position.y -= ballRadius + 0.06;
-  mesh.renderOrder = 5;
-  scene.add(mesh);
-  bullets.push({ mesh, life: bulletLifetime, velocity: velocity.clone(), shotgunShotId: shotId, hitEnemies: new Set() });
-}
-
-function fireMachinegun() {
-  if (ammo <= 0) {
-    playEmptyAmmoSound();
-    return false;
-  }
-
-  ammo -= 1;
-  updateAmmoUI();
-  spawnBullet();
-  playShootSound();
-
-  if (impulseMode === 'B') {
-    ballVelocity = impulseBResetSpeed;
-  } else if (impulseMode === 'C' && ballVelocity < 0) {
-    const instantVel = Math.abs(ballVelocity);
-    ballVelocity += impulseCfactor * instantVel;
-  } else {
-    const shotVelocityCap = getShotUpwardVelocityCap();
-    if (ballVelocity < shotVelocityCap) {
-      ballVelocity = Math.min(ballVelocity + bulletImpulse, shotVelocityCap);
-    }
-  }
-
-  return true;
-}
-
-function fireShotgun() {
-  if (ammo < 4) {
-    playEmptyAmmoSound();
-    return false;
-  }
-
-  ammo -= 4;
-  updateAmmoUI();
-  const shotId = nextShotId;
-  nextShotId += 1;
-  const spreadRad = THREE.MathUtils.degToRad(shotgunSpreadAngle);
-  const tangentLength = Math.hypot(ball.position.x, ball.position.z) || 1;
-  _shotgunTangent.set(-ball.position.z / tangentLength, 0, ball.position.x / tangentLength);
-  for (let i = 0; i < 5; i += 1) {
-    const t = i / 4 - 0.5;
-    const angle = t * spreadRad;
-    const velocity = _shotgunVelocity
-      .set(0, -Math.cos(angle) * bulletSpeed, 0)
-      .addScaledVector(_shotgunTangent, Math.sin(angle) * bulletSpeed);
-    spawnBullet(velocity, shotId);
-  }
-  playShootSound();
-
-  if (impulseMode === 'B') {
-    ballVelocity = impulseBResetSpeed;
-    ballVelocity -= impulseBShotgunImpulse;
-  } else if (impulseMode === 'C' && ballVelocity < 0) {
-    const instantVel = Math.abs(ballVelocity);
-    ballVelocity += impulseCfactor * instantVel;
-    ballVelocity -= impulseBShotgunImpulse;
-  } else {
-    const shotVelocityCap = Math.max(baseShotUpwardVelocityCap, bulletImpulse * 2.25);
-    if (ballVelocity < shotVelocityCap) {
-      ballVelocity = Math.min(ballVelocity + bulletImpulse * 3, shotVelocityCap);
-    }
-  }
-
-  return true;
-}
-
-function fireCurrentWeapon() {
-  return selectedWeapon === 'shotgun' ? fireShotgun() : fireMachinegun();
-}
-
-function startShooting() {
-  if (isGameOver || isPaused) return;
-  isShooting = true;
-  if (fireCooldown <= 0) {
-    fireCurrentWeapon();
-    fireCooldown = getCurrentFireInterval();
-  }
+function startShooting(source = 'default') {
+  shooting.start(source);
 }
 
 function updateShooting(dt) {
-  if (!isShooting || isGameOver) return;
-
-  fireCooldown -= dt;
-  while (isShooting && fireCooldown <= 0) {
-    fireCurrentWeapon();
-    fireCooldown += getCurrentFireInterval();
-  }
+  shooting.updateShooting(dt);
 }
 
 function updateBullets(dt) {
-  for (let i = bullets.length - 1; i >= 0; i -= 1) {
-    const bullet = bullets[i];
-    const previousY = bullet.mesh.position.y;
-    bullet.life -= dt;
-    bullet.mesh.position.addScaledVector(bullet.velocity, dt);
-    bullet.mesh.scale.setScalar(Math.max(0.45, bullet.life / bulletLifetime));
-
-    if (checkBulletEnemyHit(bullet) && !piercingBulletsUnlocked) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-      continue;
-    }
-
-    if (checkBulletCrateHit(bullet, previousY)) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-      continue;
-    }
-
-    if (checkBulletGoldBlockHit(bullet, previousY)) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-      continue;
-    }
-
-    if (checkBulletCannonHit(bullet)) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-      continue;
-    }
-
-    if (checkBulletPlatformHit(bullet, previousY)) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-      continue;
-    }
-
-    if (bullet.life <= 0) {
-      bullet.mesh.removeFromParent();
-      bullets.splice(i, 1);
-    }
-  }
+  shooting.updateBullets(dt);
 }
 
 function disposeEnemy(enemy) {
@@ -2375,215 +2052,125 @@ function disposeEnemy(enemy) {
 }
 
 function spawnExplosion(position, color, count = 12) {
-  for (let i = 0; i < count; i += 1) {
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1 });
-    const mesh = new THREE.Mesh(particleGeometry, material);
-    const velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 4.5,
-      (Math.random() - 0.5) * 4.5,
-      (Math.random() - 0.5) * 4.5
-    );
-    mesh.position.copy(position);
-    scene.add(mesh);
-    particles.push({ mesh, material, velocity, life: 0.55 + Math.random() * 0.25 });
-  }
+  spawnExplosionParticles({ scene, particles, particleGeometry, position, color, count });
 }
 
 function spawnBulletImpact(position) {
-  for (let i = 0; i < 7; i += 1) {
-    const material = new THREE.MeshBasicMaterial({ color: colors.bullet, transparent: true, opacity: 1 });
-    const mesh = new THREE.Mesh(particleGeometry, material);
-    const velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 1.6,
-      0.45 + Math.random() * 1.5,
-      (Math.random() - 0.5) * 1.6
-    );
-    mesh.position.copy(position);
-    scene.add(mesh);
-    particles.push({ mesh, material, velocity, life: 0.26 + Math.random() * 0.14 });
-  }
+  spawnBulletImpactParticles({ scene, particles, particleGeometry, position, color: colors.bullet });
 }
 
-function ensureBounceCubePool() {
-  if (bounceCubes.length > 0) return;
+const coinPickupSystem = createCoinPickupSystem({
+  camera,
+  ball,
+  ballRadius,
+  coinsEl,
+  coinPickups,
+  coinPickupGeometry,
+  coinPickupMaterial,
+  platformThickness,
+  getCoins: () => coins,
+  setCoins: value => { coins = value; },
+  updateCoinsUI,
+});
 
-  for (let i = 0; i < bounceCubePoolSize; i += 1) {
-    const material = new THREE.MeshStandardMaterial({ color: 0xffc107, roughness: 0.5 });
-    const mesh = new THREE.Mesh(bounceCubeGeometry, material);
-    mesh.visible = false;
-    scene.add(mesh);
-    bounceCubes.push({
-      mesh,
-      material,
-      velocity: new THREE.Vector3(),
-      active: false,
-      grounded: false,
-      platform: null,
-      value: 1,
-      collected: false,
-      order: 0,
-      angle: 0,
-      angularVelocity: 0,
-      freeFlight: false,
-    });
-  }
+const bounceCubeSystem = createBounceCubeSystem({
+  scene,
+  world,
+  ball,
+  ballRadius,
+  platforms,
+  bounceCubes,
+  bounceCubeGeometry,
+  bounceCubePoolSize,
+  gameplayLaneRadius,
+  platformThickness,
+  platformInnerRadius,
+  platformOuterRadius,
+  twoPi,
+  getCoinAttractionRadius: () => coinAttractionRadius,
+  getTileAtWorldPoint,
+  collectBounceCube,
+});
+
+const crateSystem = createCrateSystem({
+  scene,
+  ball,
+  ballRadius,
+  platforms,
+  crates,
+  crateGeometry,
+  crateMaterial,
+  platformThickness,
+  platformInnerRadius,
+  platformOuterRadius,
+  twoPi,
+  colors,
+  getCoins: () => coins,
+  setCoins: value => { coins = value; },
+  updateCoinsUI,
+  coinsEl,
+  spawnExplosion,
+  spawnCoinPickup,
+  spawnCoinPickupAnimation,
+});
+
+const goldBlockSystem = createGoldBlockSystem({
+  scene,
+  ball,
+  ballRadius,
+  platforms,
+  crates,
+  goldBlocks,
+  particles,
+  goldBlockGeometry,
+  goldBlockMaterial,
+  particleGeometry,
+  gameplayLaneRadius,
+  platformThickness,
+  platformInnerRadius,
+  platformOuterRadius,
+  goldBlockSize,
+  goldBlockHalfSize,
+  goldBlockCollisionRadius,
+  goldBlockHitsToBreak,
+  goldBlocksPerLevel,
+  goldCubesPerHit,
+  twoPi,
+  colors,
+  getBallVelocity: () => ballVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  getStompImpulse: () => stompImpulse,
+  getCannons: () => cannons,
+  getEnemies: () => enemies,
+  getCannonWorldPosition,
+  getEnemyWorldPosition,
+  reloadAmmo,
+  spawnFloatingText,
+  playReloadSound,
+  playBounceSound,
+  spawnExplosion,
+  spawnBulletImpact,
+  spawnBounceCubes,
+});
+
+function ensureBounceCubePool() {
+  bounceCubeSystem.ensureBounceCubePool();
 }
 
 function getPooledBounceCube() {
-  ensureBounceCubePool();
-  const inactiveCube = bounceCubes.find(cube => !cube.active);
-  if (inactiveCube) return inactiveCube;
-
-  return bounceCubes.reduce((oldest, cube) => cube.order < oldest.order ? cube : oldest, bounceCubes[0]);
+  return bounceCubeSystem.getPooledBounceCube();
 }
 
 function spawnBounceCubes(position, count = 3, color = 0xffc107, value = 1) {
-  ensureBounceCubePool();
-
-  for (let i = 0; i < count; i += 1) {
-    const cube = getPooledBounceCube();
-    resetBounceCube(cube, position, color, value);
-  }
+  bounceCubeSystem.spawnBounceCubes(position, count, color, value);
 }
 
 function resetBounceCube(cube, position, color = 0xffc107, value = 1) {
-  if (cube.mesh.parent && cube.mesh.parent !== scene) cube.mesh.parent.remove(cube.mesh);
-  if (cube.mesh.parent !== scene) scene.add(cube.mesh);
-
-  cube.mesh.visible = true;
-  cube.mesh.position.copy(position);
-  cube.mesh.position.y += 0.1;
-  cube.mesh.rotation.set(0, 0, 0);
-  cube.material.color.setHex(color);
-
-  const radial = Math.hypot(position.x, position.z) || 1;
-  cube.mesh.position.x = (position.x / radial) * gameplayLaneRadius;
-  cube.mesh.position.z = (position.z / radial) * gameplayLaneRadius;
-
-  cube.angle = Math.atan2(cube.mesh.position.z, cube.mesh.position.x);
-  const tangentialSpeed = 1.5 + Math.random() * 2;
-  cube.angularVelocity = (Math.random() < 0.5 ? -1 : 1) * tangentialSpeed / gameplayLaneRadius;
-
-  cube.velocity.set(0, 2.5 + Math.random() * 2, 0);
-
-  cube.active = true;
-  cube.grounded = false;
-  cube.platform = null;
-  cube.collected = false;
-  cube.value = value;
-  cube.order = nextBounceCubeOrder;
-  nextBounceCubeOrder += 1;
+  bounceCubeSystem.resetBounceCube(cube, position, color, value);
 }
 
 function updateBounceCubes(dt) {
-  const collectRadius = (ballRadius + 0.14) * (ballRadius + 0.14);
-  const attractRadiusSq = coinAttractionRadius * coinAttractionRadius;
-  const attractStrength = 11;
-  const cubeHalfSize = 0.07;
-
-  for (const cube of bounceCubes) {
-    if (!cube.active || cube.collected) continue;
-
-    const worldPos = getBounceCubeWorldPosition(cube);
-    const dx = ball.position.x - worldPos.x;
-    const dy = ball.position.y - worldPos.y;
-    const dz = ball.position.z - worldPos.z;
-    const distanceSq = dx * dx + dy * dy + dz * dz;
-
-    if (distanceSq <= attractRadiusSq && distanceSq > collectRadius) {
-      const direction = new THREE.Vector3(dx, dy, dz).normalize();
-      detachBounceCubeToScene(cube, worldPos);
-      cube.grounded = false;
-      cube.platform = null;
-      cube.freeFlight = true;
-      cube.velocity.addScaledVector(direction, attractStrength * dt);
-      cube.velocity.multiplyScalar(Math.max(0, 1 - 1.8 * dt));
-    }
-
-    if (!cube.grounded) {
-      const previousY = cube.mesh.position.y;
-      cube.velocity.y -= 14 * dt;
-
-      if (cube.freeFlight) {
-        cube.mesh.position.addScaledVector(cube.velocity, dt);
-      } else {
-        cube.angle += cube.angularVelocity * dt;
-        cube.mesh.position.x = Math.cos(cube.angle) * gameplayLaneRadius;
-        cube.mesh.position.z = Math.sin(cube.angle) * gameplayLaneRadius;
-        cube.mesh.position.y += cube.velocity.y * dt;
-      }
-
-      cube.mesh.rotation.x += dt * 5;
-      cube.mesh.rotation.z += dt * 3;
-
-      for (const platform of platforms) {
-        const platformTop = platformY(platform) + platformThickness / 2;
-        const bottomBefore = previousY - cubeHalfSize;
-        const bottomNow = cube.mesh.position.y - cubeHalfSize;
-        if (bottomBefore >= platformTop && bottomNow <= platformTop && cube.velocity.y < 0) {
-          const landingWorldPos = cube.mesh.position.clone();
-          landingWorldPos.y = platformTop + cubeHalfSize;
-
-          if (!cube.freeFlight) {
-            landingWorldPos.x = Math.cos(cube.angle) * gameplayLaneRadius;
-            landingWorldPos.z = Math.sin(cube.angle) * gameplayLaneRadius;
-          }
-
-          const tile = getTileAtWorldPoint(platform, landingWorldPos);
-          if (!tile) continue;
-
-          const tangentX = -Math.sin(cube.angle || Math.atan2(landingWorldPos.z, landingWorldPos.x));
-          const tangentZ = Math.cos(cube.angle || Math.atan2(landingWorldPos.z, landingWorldPos.x));
-          const tangentialSpeed = cube.freeFlight
-            ? (-landingWorldPos.z * cube.velocity.x + landingWorldPos.x * cube.velocity.z) / (Math.hypot(landingWorldPos.x, landingWorldPos.z) || 1)
-            : (cube.angularVelocity || 0) * gameplayLaneRadius;
-
-          const localNext = landingWorldPos.clone();
-          localNext.x += tangentX * tangentialSpeed * 0.7;
-          localNext.z += tangentZ * tangentialSpeed * 0.7;
-
-          cube.mesh.removeFromParent();
-          world.add(cube.mesh);
-          cube.mesh.position.copy(landingWorldPos);
-          world.worldToLocal(cube.mesh.position);
-          world.worldToLocal(localNext);
-          cube.grounded = true;
-          cube.platform = platform;
-          cube.freeFlight = false;
-          cube.angularVelocity = 0;
-          cube.angle = 0;
-          cube.velocity.set(
-            (localNext.x - cube.mesh.position.x) * 0.7,
-            0,
-            (localNext.z - cube.mesh.position.z) * 0.7
-          );
-          cube.mesh.rotation.set(0, 0, 0);
-          break;
-        }
-      }
-    } else {
-      cube.mesh.position.x += cube.velocity.x * dt;
-      cube.mesh.position.z += cube.velocity.z * dt;
-      if (cube.platform) {
-        cube.mesh.position.y = cube.platform.group.position.y + platformThickness / 2 + cubeHalfSize;
-        const localRadial = Math.hypot(cube.mesh.position.x, cube.mesh.position.z);
-        if (localRadial > 0.01) {
-          cube.mesh.position.x = (cube.mesh.position.x / localRadial) * gameplayLaneRadius;
-          cube.mesh.position.z = (cube.mesh.position.z / localRadial) * gameplayLaneRadius;
-        }
-      }
-      cube.velocity.x *= Math.max(0, 1 - 4 * dt);
-      cube.velocity.z *= Math.max(0, 1 - 4 * dt);
-    }
-
-    const nextWorldPos = getBounceCubeWorldPosition(cube);
-    const nextDx = ball.position.x - nextWorldPos.x;
-    const nextDy = ball.position.y - nextWorldPos.y;
-    const nextDz = ball.position.z - nextWorldPos.z;
-    if (nextDx * nextDx + nextDy * nextDy + nextDz * nextDz <= collectRadius) {
-      collectBounceCube(cube, nextWorldPos);
-    }
-  }
+  bounceCubeSystem.updateBounceCubes(dt);
 }
 
 function collectBounceCube(cube, worldPos) {
@@ -2600,167 +2187,48 @@ function collectBounceCube(cube, worldPos) {
 }
 
 function getBounceCubeWorldPosition(cube) {
-  if (!cube.mesh.parent || cube.mesh.parent === scene) return cube.mesh.position;
-  const worldPos = cube.mesh.position.clone();
-  cube.mesh.parent.localToWorld(worldPos);
-  return worldPos;
+  return bounceCubeSystem.getBounceCubeWorldPosition(cube);
 }
 
 function detachBounceCubeToScene(cube, worldPos = getBounceCubeWorldPosition(cube)) {
-  if (cube.mesh.parent === scene) return;
-  if (cube.mesh.parent) {
-    const worldNext = cube.mesh.position.clone().add(cube.velocity);
-    cube.mesh.parent.localToWorld(worldNext);
-    cube.velocity.copy(worldNext.sub(worldPos));
-    cube.mesh.parent.remove(cube.mesh);
-  }
-  scene.add(cube.mesh);
-  cube.mesh.position.copy(worldPos);
+  bounceCubeSystem.detachBounceCubeToScene(cube, worldPos);
 }
 
 function deactivateBounceCube(cube) {
-  if (cube.mesh.parent && cube.mesh.parent !== scene) cube.mesh.parent.remove(cube.mesh);
-  if (cube.mesh.parent !== scene) scene.add(cube.mesh);
-  cube.mesh.visible = false;
-  cube.velocity.set(0, 0, 0);
-  cube.active = false;
-  cube.grounded = false;
-  cube.platform = null;
-  cube.collected = false;
-  cube.order = 0;
-  cube.angle = 0;
-  cube.angularVelocity = 0;
-  cube.freeFlight = false;
+  bounceCubeSystem.deactivateBounceCube(cube);
 }
 
 function deactivateAllBounceCubes() {
-  ensureBounceCubePool();
-  for (const cube of bounceCubes) {
-    deactivateBounceCube(cube);
-  }
+  bounceCubeSystem.deactivateAllBounceCubes();
 }
 
 function detachBounceCubesFromPlatform(platform) {
-  for (const cube of bounceCubes) {
-    if (!cube.active || cube.platform !== platform) continue;
-
-    detachBounceCubeToScene(cube);
-    cube.platform = null;
-    cube.grounded = false;
-    cube.freeFlight = true;
-    cube.velocity.set(0, -0.2, 0);
-  }
+  bounceCubeSystem.detachBounceCubesFromPlatform(platform);
 }
 
 function detachBounceCubesFromTile(platform, tile) {
-  for (const cube of bounceCubes) {
-    if (!cube.active || !cube.grounded || cube.platform !== platform) continue;
-
-    const worldPos = getBounceCubeWorldPosition(cube);
-    _bounceCubeLocalPosition.copy(worldPos);
-    platform.group.worldToLocal(_bounceCubeLocalPosition);
-    const radius = Math.hypot(_bounceCubeLocalPosition.x, _bounceCubeLocalPosition.z);
-    const angle = (Math.atan2(_bounceCubeLocalPosition.z, _bounceCubeLocalPosition.x) + twoPi) % twoPi;
-    if (radius < platformInnerRadius || radius > platformOuterRadius || !angleInArc(angle, tile.start, tile.end)) continue;
-
-    detachBounceCubeToScene(cube, worldPos);
-    cube.platform = null;
-    cube.grounded = false;
-    cube.freeFlight = true;
-    cube.velocity.set(0, -0.2, 0);
-  }
+  bounceCubeSystem.detachBounceCubesFromTile(platform, tile);
 }
 
 function detachCratesAndGoldFromTile(platform, tile) {
-  for (const crate of crates) {
-    if (crate.broken || crate.platformGroup !== platform.group) continue;
-    const localPos = new THREE.Vector3();
-    crate.mesh.getWorldPosition(localPos);
-    const r = Math.hypot(localPos.x, localPos.z);
-    const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
-    if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
-    crate.platformGroup.remove(crate.mesh);
-    scene.add(crate.mesh);
-    crate.platformGroup = null;
-    crate.falling = true;
-    crate.fallVelocity = 0;
-  }
-  for (const gb of goldBlocks) {
-    if (gb.broken || gb.platformData !== platform) continue;
-    const localPos = new THREE.Vector3();
-    gb.mesh.getWorldPosition(localPos);
-    const r = Math.hypot(localPos.x, localPos.z);
-    const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
-    if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
-    gb.platformData.group.remove(gb.mesh);
-    scene.add(gb.mesh);
-    gb.platformData = null;
-    gb.falling = true;
-    gb.fallVelocity = 0;
-  }
+  crateSystem.detachCratesFromTile(platform, tile);
+  goldBlockSystem.detachGoldBlocksFromTile(platform, tile);
 }
 
 function breakCrate(crateIndex, byBullet = false) {
-  const crate = crates[crateIndex];
-  if (!crate || crate.broken) return false;
-
-  crate.broken = true;
-  crate.mesh.getWorldPosition(_crateWorldPosition);
-  const platGroup = crate.platformGroup;
-  spawnExplosion(_crateWorldPosition, colors.crate, 12);
-  platGroup.remove(crate.mesh);
-  crate.mesh.geometry.dispose();
-  crate.mesh.material.dispose();
-  crates.splice(crateIndex, 1);
-
-  if (byBullet) {
-    spawnCoinPickup(_crateWorldPosition, platGroup);
-  } else {
-    coins += 5;
-    updateCoinsUI(coinsEl, coins);
-    spawnCoinPickupAnimation(_crateWorldPosition);
-  }
-  return true;
+  return crateSystem.breakCrate(crateIndex, byBullet);
 }
 
 function spawnCoinPickup(worldPos, platformGroup) {
-  const mesh = new THREE.Mesh(coinPickupGeometry, coinPickupMaterial);
-  _coinLocalPosition.copy(worldPos);
-  platformGroup.worldToLocal(_coinLocalPosition);
-  _coinLocalPosition.y = platformThickness / 2 + 0.04;
-  mesh.position.copy(_coinLocalPosition);
-  platformGroup.add(mesh);
-  coinPickups.push({ mesh, value: 5, collected: false, platformGroup });
+  coinPickupSystem.spawnCoinPickup(worldPos, platformGroup);
 }
 
 function updateCoinPickups(dt) {
-  for (let i = coinPickups.length - 1; i >= 0; i -= 1) {
-    const pickup = coinPickups[i];
-    if (pickup.collected) continue;
-    pickup.mesh.rotation.y += dt * 3;
-
-    pickup.mesh.getWorldPosition(_pickupWorldPosition);
-    const dx = ball.position.x - _pickupWorldPosition.x;
-    const dy = ball.position.y - _pickupWorldPosition.y;
-    const dz = ball.position.z - _pickupWorldPosition.z;
-    if (dx * dx + dy * dy + dz * dz <= (ballRadius + 0.25) * (ballRadius + 0.25)) {
-      pickup.collected = true;
-      coins += pickup.value;
-      updateCoinsUI(coinsEl, coins);
-      spawnCoinPickupAnimation(_pickupWorldPosition);
-      pickup.mesh.removeFromParent();
-      pickup.mesh.geometry.dispose();
-      coinPickups.splice(i, 1);
-    }
-  }
+  coinPickupSystem.updateCoinPickups(dt);
 }
 
 function clearCoinPickups() {
-  while (coinPickups.length) {
-    const pickup = coinPickups.pop();
-    pickup.mesh.removeFromParent();
-    pickup.mesh.geometry.dispose();
-  }
+  coinPickupSystem.clearCoinPickups();
 }
 
 function disposeTile(tile) {
@@ -3037,77 +2505,15 @@ function getBallEnemyContact(enemy) {
 }
 
 function checkBulletCrateHit(bullet, previousY) {
-  for (let i = crates.length - 1; i >= 0; i -= 1) {
-    const crate = crates[i];
-    if (crate.broken) continue;
-    crate.mesh.getWorldPosition(_crateWorldPosition);
-    const crossedCrateY = previousY >= _crateWorldPosition.y && bullet.mesh.position.y <= _crateWorldPosition.y;
-    const horizontalDistance = Math.hypot(
-      bullet.mesh.position.x - _crateWorldPosition.x,
-      bullet.mesh.position.z - _crateWorldPosition.z
-    );
-    if (crossedCrateY && horizontalDistance <= 0.3) {
-      return breakCrate(i, true);
-    }
-  }
-  return false;
+  return crateSystem.checkBulletCrateHit(bullet, previousY);
 }
 
 function checkBallCrateHit(previousY) {
-  const bottomBefore = previousY - ballRadius;
-  const bottomNow = ball.position.y - ballRadius;
-
-  for (let i = crates.length - 1; i >= 0; i -= 1) {
-    const crate = crates[i];
-    if (crate.broken) continue;
-    crate.mesh.getWorldPosition(_crateWorldPosition);
-    const crateTop = _crateWorldPosition.y + 0.17;
-    const crossedCrateTop = bottomBefore >= crateTop && bottomNow <= crateTop;
-    const horizontalDistance = Math.hypot(
-      ball.position.x - _crateWorldPosition.x,
-      ball.position.z - _crateWorldPosition.z
-    );
-
-    if (crossedCrateTop && horizontalDistance <= ballRadius + 0.22) {
-      breakCrate(i);
-      return;
-    }
-  }
+  crateSystem.checkBallCrateHit(previousY);
 }
 
 function checkBallGoldBlockStomp(previousY) {
-  if (ballVelocity >= 0) return;
-
-  const bottomBefore = previousY - ballRadius;
-  const bottomNow = ball.position.y - ballRadius;
-
-  for (let i = goldBlocks.length - 1; i >= 0; i -= 1) {
-    const goldBlock = goldBlocks[i];
-    if (goldBlock.broken) continue;
-
-    const position = new THREE.Vector3();
-    goldBlock.mesh.getWorldPosition(position);
-    const blockTop = position.y + goldBlockHalfSize;
-
-    if (bottomBefore < blockTop || bottomNow > blockTop) continue;
-
-    const horizontalDistance = Math.hypot(
-      ball.position.x - position.x,
-      ball.position.z - position.z
-    );
-
-    if (horizontalDistance <= goldBlockCollisionRadius) {
-      damageGoldBlock(i);
-      if (reloadAmmo()) {
-        spawnFloatingText('Reload', ball.position);
-        playReloadSound();
-      }
-      playBounceSound();
-      ball.position.y = blockTop + ballRadius;
-      ballVelocity = Math.max(ballVelocity, stompImpulse);
-      return;
-    }
-  }
+  goldBlockSystem.checkBallGoldBlockStomp(previousY);
 }
 
 function checkBulletEnemyHit(bullet) {
@@ -3139,137 +2545,28 @@ function checkBulletEnemyHit(bullet) {
 }
 
 function destroyGoldBlock(index, position) {
-  const goldBlock = goldBlocks[index];
-  if (!goldBlock || goldBlock.broken) return;
-
-  goldBlock.broken = true;
-  spawnExplosion(position, colors.gold, 14);
-  if (goldBlock.mesh.parent) goldBlock.mesh.parent.remove(goldBlock.mesh);
-  goldBlock.mesh.geometry.dispose();
-  goldBlock.mesh.material.dispose();
-  goldBlocks.splice(index, 1);
+  goldBlockSystem.destroyGoldBlock(index, position);
 }
 
 function damageGoldBlock(index) {
-  const goldBlock = goldBlocks[index];
-  if (!goldBlock || goldBlock.broken) return false;
-
-  const position = new THREE.Vector3();
-  goldBlock.mesh.getWorldPosition(position);
-  goldBlock.hp -= 1;
-  goldBlock.flashTimer = 0.16;
-  spawnBounceCubes(position, goldCubesPerHit, colors.gold, 1);
-  spawnBulletImpact(position);
-
-  if (goldBlock.hp <= 0) {
-    destroyGoldBlock(index, position);
-  }
-  return true;
+  return goldBlockSystem.damageGoldBlock(index);
 }
 
 function spawnGoldSparkle(goldBlock) {
-  const localOffset = new THREE.Vector3(
-    (Math.random() - 0.5) * goldBlockSize * 0.8,
-    goldBlockHalfSize + 0.035,
-    (Math.random() - 0.5) * goldBlockSize * 0.8
-  );
-  const position = localOffset.clone();
-  goldBlock.mesh.localToWorld(position);
-
-  const material = new THREE.MeshBasicMaterial({ color: colors.gold, transparent: true, opacity: 0.82, depthWrite: false });
-  const mesh = new THREE.Mesh(particleGeometry, material);
-  mesh.position.copy(position);
-  mesh.scale.setScalar(0.45 + Math.random() * 0.35);
-  scene.add(mesh);
-  particles.push({
-    mesh,
-    material,
-    velocity: new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.65 + Math.random() * 0.45, (Math.random() - 0.5) * 0.12),
-    gravity: 0,
-    life: 2,
-    maxLife: 2,
-  });
+  goldBlockSystem.spawnGoldSparkle(goldBlock);
 }
 
 function checkBulletGoldBlockHit(bullet, previousY) {
-  for (let i = goldBlocks.length - 1; i >= 0; i -= 1) {
-    const goldBlock = goldBlocks[i];
-    if (goldBlock.broken) continue;
-
-    const position = new THREE.Vector3();
-    goldBlock.mesh.getWorldPosition(position);
-    const crossedBlockY = previousY >= position.y - goldBlockHalfSize && bullet.mesh.position.y <= position.y + goldBlockHalfSize;
-    const horizontalDistance = Math.hypot(
-      bullet.mesh.position.x - position.x,
-      bullet.mesh.position.z - position.z
-    );
-
-    if (crossedBlockY && horizontalDistance <= goldBlockHalfSize + 0.16) {
-      return damageGoldBlock(i);
-    }
-  }
-  return false;
+  return goldBlockSystem.checkBulletGoldBlockHit(bullet, previousY);
 }
 
 function updateGoldBlocks(dt) {
-  for (const goldBlock of goldBlocks) {
-    if (goldBlock.broken) continue;
-
-    goldBlock.mesh.rotation.y += dt * 0.7;
-    goldBlock.sparkleTimer -= dt;
-    if (goldBlock.sparkleTimer <= 0) {
-      goldBlock.sparkleTimer = 0.06 + Math.random() * 0.06;
-      spawnGoldSparkle(goldBlock);
-    }
-
-    if (goldBlock.flashTimer > 0) {
-      goldBlock.flashTimer = Math.max(0, goldBlock.flashTimer - dt);
-      goldBlock.mesh.material.color.setHex(colors.goldFlash);
-      goldBlock.mesh.material.emissive.setHex(colors.goldFlash);
-      goldBlock.mesh.material.emissiveIntensity = 0.55;
-    } else {
-      goldBlock.mesh.material.color.setHex(colors.gold);
-      goldBlock.mesh.material.emissive.setHex(0x8a5a00);
-      goldBlock.mesh.material.emissiveIntensity = 0.25;
-    }
-  }
+  goldBlockSystem.updateGoldBlocks(dt);
 }
 
 function updateFallingCratesAndGold(dt) {
-  for (const crate of crates) {
-    if (!crate.falling || crate.broken) continue;
-    const previousY = crate.mesh.position.y;
-    crate.fallVelocity = (crate.fallVelocity ?? 0) - 14 * dt;
-    crate.mesh.position.y += crate.fallVelocity * dt;
-    for (const platform of platforms) {
-      const platformTop = platformY(platform) + platformThickness / 2 + 0.22;
-      if (previousY >= platformTop && crate.mesh.position.y <= platformTop) {
-        crate.platformGroup = platform.group;
-        platform.group.add(crate.mesh);
-        crate.mesh.position.y = platformThickness / 2 + 0.22;
-        crate.falling = false;
-        crate.fallVelocity = 0;
-        break;
-      }
-    }
-  }
-  for (const gb of goldBlocks) {
-    if (!gb.falling || gb.broken) continue;
-    const previousY = gb.mesh.position.y;
-    gb.fallVelocity = (gb.fallVelocity ?? 0) - 14 * dt;
-    gb.mesh.position.y += gb.fallVelocity * dt;
-    for (const platform of platforms) {
-      const platformTop = platformY(platform) + platformThickness / 2 + goldBlockHalfSize;
-      if (previousY >= platformTop && gb.mesh.position.y <= platformTop) {
-        gb.platformData = platform;
-        platform.group.add(gb.mesh);
-        gb.mesh.position.y = platformThickness / 2 + goldBlockHalfSize;
-        gb.falling = false;
-        gb.fallVelocity = 0;
-        break;
-      }
-    }
-  }
+  crateSystem.updateFallingCrates(dt);
+  goldBlockSystem.updateFallingGoldBlocks(dt);
 }
 
 function getCannonWorldPosition(cannon) {
@@ -3820,7 +3117,7 @@ function clearEnemiesAndParticles() {
 }
 
 function clearTower() {
-  platformBandIndex.clear();
+  clearPlatformBandIndex();
   clearBullets();
   clearEnemiesAndParticles();
   clearCoinPickups();
@@ -4115,14 +3412,14 @@ function activatePendingPowerups() {
 }
 
 function updateShopUI() {
-  shopCoinsEl.textContent = `${coins} coins`;
-  shopBulletBtn.disabled = coins < 5;
-  shopHpBtn.disabled = coins < 20 || hp >= maxHp;
-  shopArmorBtn.disabled = coins < 20 || hasShield;
-  shopInvulnBtn.disabled = coins < 30 || invulnerabilityTimer > 0;
-  shopPiercingBtn.disabled = coins < piercingCost || piercingBulletsUnlocked;
-  shopVampiricBtn.disabled = coins < vampiricCost || vampiricLifeUnlocked;
-  shopComboShieldBtn.disabled = coins < comboShieldCost || comboShieldUnlocked;
+  renderShopUI({
+    shopCoinsEl, shopBulletBtn, shopHpBtn, shopArmorBtn, shopInvulnBtn,
+    shopPiercingBtn, shopVampiricBtn, shopComboShieldBtn,
+  }, {
+    coins, hp, maxHp, hasShield, invulnerabilityTimer, piercingCost,
+    piercingBulletsUnlocked, vampiricCost, vampiricLifeUnlocked,
+    comboShieldCost, comboShieldUnlocked,
+  });
 }
 
 function openShop() {
@@ -4214,15 +3511,15 @@ function buyShopComboShield() {
 }
 
 function updateLevelCompleteUI() {
-  completeSummaryEl.textContent = `Level ${currentLevel} cleared. Coins: ${coins}. Choose one reward, then start Level ${currentLevel + 1}.`;
-  rewardHpButton.disabled = rewardChosen || hp >= maxHp;
-  rewardAmmoButton.disabled = rewardChosen;
-  rewardPiercingButton.disabled = rewardChosen || piercingBulletsUnlocked;
-  rewardVampiricButton.disabled = rewardChosen || vampiricLifeUnlocked;
-  rewardComboShieldButton.disabled = rewardChosen || comboShieldUnlocked;
-  nextLevelButton.disabled = !rewardChosen;
-  buyInvulnerabilityButton.disabled = coins < invulnerabilityCost || pendingInvulnerability;
-  buyShieldButton.disabled = coins < shieldCost || pendingShield || hasShield;
+  renderLevelCompleteUI({
+    completeSummaryEl, rewardHpButton, rewardAmmoButton, rewardPiercingButton,
+    rewardVampiricButton, rewardComboShieldButton, nextLevelButton,
+    buyInvulnerabilityButton, buyShieldButton,
+  }, {
+    currentLevel, coins, rewardChosen, hp, maxHp, piercingBulletsUnlocked,
+    vampiricLifeUnlocked, comboShieldUnlocked, invulnerabilityCost,
+    pendingInvulnerability, shieldCost, pendingShield, hasShield,
+  });
 }
 
 function completeLevel() {
@@ -4242,7 +3539,6 @@ function completeLevel() {
 }
 
 const _ballLocal = new THREE.Vector3();
-const _collisionPoint = new THREE.Vector3();
 const _bulletImpactPoint = new THREE.Vector3();
 const _bulletImpactLocal = new THREE.Vector3();
 const _crateWorldPosition = new THREE.Vector3();
@@ -4267,103 +3563,19 @@ const _enemyProjectedPosition = new THREE.Vector3();
 const _cannonMouthWorldPosition = new THREE.Vector3();
 const _cannonLosPoint = new THREE.Vector3();
 const _cannonWorldPosition = new THREE.Vector3();
-const _shotgunTangent = new THREE.Vector3();
-const _shotgunVelocity = new THREE.Vector3();
 const _pillarWormNormal = new THREE.Vector3();
 const _ballRadialNormal = new THREE.Vector3();
 const _sawBladeWorldPosition = new THREE.Vector3();
 const _ledgePreviousBottom = new THREE.Vector3();
 const _ledgeCurrentBottom = new THREE.Vector3();
 const _ledgeStompPoint = new THREE.Vector3();
-
-const debugPanel = collisionDebugEnabled ? document.createElement('pre') : null;
-const debugMarker = collisionDebugEnabled
-  ? new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff00ff, depthTest: false })
-    )
-  : null;
-const debugRing = collisionDebugEnabled ? new THREE.Group() : null;
-
-function makeCircleLine(radius, color) {
-  const points = [];
-  for (let i = 0; i <= 96; i += 1) {
-    const angle = (i / 96) * twoPi;
-    points.push(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
-  }
-  return new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color, depthTest: false })
-  );
-}
-
-if (collisionDebugEnabled) {
-  debugPanel.id = 'debug-panel';
-  document.body.appendChild(debugPanel);
-  debugMarker.renderOrder = 10;
-  scene.add(debugMarker);
-  debugRing.add(makeCircleLine(platformInnerRadius, 0xff00ff));
-  debugRing.add(makeCircleLine(platformOuterRadius, 0xff00ff));
-  world.add(debugRing);
-}
-
-function updateCollisionDebug(platform, contact, platformTop) {
-  if (!collisionDebugEnabled) return;
-
-  _collisionPoint.set(contact.localX, platformThickness / 2 + 0.04, contact.localZ);
-  platform.group.localToWorld(_collisionPoint);
-  debugMarker.position.copy(_collisionPoint);
-  debugMarker.visible = true;
-  debugRing.position.y = platformY(platform) + platformThickness / 2 + 0.035;
-  debugRing.visible = true;
-
-  debugPanel.textContent = [
-    `platform=${platform.id}`,
-    `tile=${contact.tile ? contact.tile.index : 'gap'} ${contact.tile ? contact.tile.type : ''}`,
-    `angle=${contact.angle.toFixed(3)}`,
-    `radius=${contact.radius.toFixed(3)}`,
-    `ballY=${ball.position.y.toFixed(3)}`,
-    `platformTop=${platformTop.toFixed(3)}`,
-    `worldRotation=${world.rotation.y.toFixed(3)}`,
-  ].join('\n');
-}
-
-function platformY(platform) {
-  return platform.group.position.y;
-}
-
-const platformBandIndex = new Map();
-
-function registerPlatformInBand(platform) {
-  const y = platformY(platform);
-  const band = Math.round(y / platformSpacing);
-  if (!platformBandIndex.has(band)) platformBandIndex.set(band, []);
-  platformBandIndex.get(band).push(platform);
-}
-
-function unregisterPlatformFromBand(platform) {
-  const y = platformY(platform);
-  const band = Math.round(y / platformSpacing);
-  const arr = platformBandIndex.get(band);
-  if (!arr) return;
-  const idx = arr.indexOf(platform);
-  if (idx !== -1) arr.splice(idx, 1);
-}
-
-function getPlatformsNearY(yMin, yMax) {
-  const bandMin = Math.round(yMin / platformSpacing) - 1;
-  const bandMax = Math.round(yMax / platformSpacing) + 1;
-  const result = [];
-  for (let b = bandMin; b <= bandMax; b += 1) {
-    const arr = platformBandIndex.get(b);
-    if (arr) {
-      for (let i = 0; i < arr.length; i += 1) {
-        result.push(arr[i]);
-      }
-    }
-  }
-  return result;
-}
+const collisionDebug = createCollisionDebug({
+  enabled: collisionDebugEnabled,
+  scene,
+  world,
+  ball,
+  getWorldRotation: () => world.rotation.y,
+});
 
 function getTileAtWorldPoint(platform, worldPoint) {
   _bulletImpactLocal.copy(worldPoint);
@@ -4468,7 +3680,7 @@ function handlePlatformCollision(previousY) {
   for (const collision of crossedPlatforms) {
     const { platform, platformTop } = collision;
     const contact = getBallContactOnPlatform(platform);
-    updateCollisionDebug(platform, contact, platformTop);
+    collisionDebug.update(platform, contact, platformTop);
 
     if (!contact.tile) continue;
 
@@ -4538,9 +3750,7 @@ function recyclePlatforms() {
 
     if (y > ball.position.y + 12) {
       detachBounceCubesFromPlatform(platform);
-      for (let g = goldBlocks.length - 1; g >= 0; g -= 1) {
-        if (goldBlocks[g].platformData === platform) goldBlocks.splice(g, 1);
-      }
+      goldBlockSystem.removeGoldBlocksForPlatform(platform);
       for (let e = enemies.length - 1; e >= 0; e -= 1) {
         if (enemies[e].type === 'explosiveMushroom' && enemies[e].platformData === platform) {
           disposeEnemy(enemies[e]);
@@ -4550,13 +3760,7 @@ function recyclePlatforms() {
       for (let s = spikeTraps.length - 1; s >= 0; s -= 1) {
         if (spikeTraps[s].platformGroup === platform.group) spikeTraps.splice(s, 1);
       }
-      for (let c = coinPickups.length - 1; c >= 0; c -= 1) {
-        if (coinPickups[c].platformGroup === platform.group) {
-          coinPickups[c].mesh.removeFromParent();
-          coinPickups[c].mesh.geometry.dispose();
-          coinPickups.splice(c, 1);
-        }
-      }
+      coinPickupSystem.removeCoinPickupsForPlatform(platform.group);
       unregisterPlatformFromBand(platform);
       world.remove(platform.group);
       platform.group.traverse((child) => {
@@ -4614,490 +3818,6 @@ function updateTileFlashes(dt) {
     }
   }
 }
-
-const arScene = new THREE.Scene();
-const arRoot = new THREE.Group();
-const arTowerRotator = new THREE.Group();
-const arBullets = [];
-const arPlatforms = [];
-let arPillar = null;
-let arModeActive = false;
-let arTowerPlaced = false;
-let arReferenceSpace = null;
-let arViewerSpace = null;
-let arHitTestSource = null;
-let arBall = null;
-let arBallVelocity = 0;
-let arLowestPlatformY = 0;
-let arNextPlatformY = 0;
-let arNextPlatformId = 0;
-let arAmmo = 0;
-let arIsShooting = false;
-let arFireCooldown = 0;
-let arLastHapticStep = 0;
-const arScale = 0.16;
-const arMinScale = arScale * 0.1;
-let arCurrentScale = arScale;
-let arScaleAdjusting = false;
-let arScaleStartDistance = 0;
-let arScaleStartValue = arScale;
-const arVisiblePlatformCount = 12;
-const arPlatformSpacing = 2.125;
-const arPlatformBaseY = 0;
-const arGravity = -4.5;
-const arBounceVelocity = 3.1;
-const arBulletSpeed = 5.8;
-const arBulletLifetime = 1.25;
-const arFireInterval = 0.3;
-const arMaxAmmo = 5;
-const arShotImpulse = 1.25;
-const arShotVelocityCap = 2.75;
-const arPillarHeight = 8.5;
-const arPillarTopOffset = 2.1;
-const arControllerPosition = new THREE.Vector3();
-const arControllerLocalPosition = new THREE.Vector3();
-const arGripControllers = new Set();
-
-arScene.add(new THREE.HemisphereLight(0xffffff, 0x78909c, 2.2));
-const arSun = new THREE.DirectionalLight(0xffffff, 1.5);
-arSun.position.set(2, 5, 3);
-arScene.add(arSun);
-arRoot.visible = false;
-arRoot.scale.setScalar(arScale);
-arScene.add(arRoot);
-
-const arReticleGeometry = new THREE.RingGeometry(0.08, 0.105, 32).rotateX(-Math.PI / 2);
-const arReticleMaterial = new THREE.MeshBasicMaterial({ color: 0x2ecc71, transparent: true, opacity: 0.88, depthTest: false });
-const arReticle = new THREE.Mesh(arReticleGeometry, arReticleMaterial);
-arReticle.matrixAutoUpdate = false;
-arReticle.visible = false;
-arReticle.renderOrder = 30;
-arScene.add(arReticle);
-
-function setArStatus(message, visible = true) {
-  arStatusEl.textContent = message;
-  arStatusEl.hidden = !visible;
-}
-
-function setDesktopVisible(visible) {
-  world.visible = visible;
-  ball.visible = visible;
-  shieldMesh.visible = visible && hasShield;
-  gameOverEl.hidden = true;
-  levelCompleteEl.hidden = true;
-  pausePanelEl.hidden = true;
-  extraPanelEl.hidden = true;
-  shopPanelEl.hidden = true;
-}
-
-function disposeGroupChildren(group) {
-  while (group.children.length) {
-    const child = group.children.pop();
-    child.traverse((item) => {
-      if (item.geometry) item.geometry.dispose();
-      if (item.material) item.material.dispose();
-    });
-  }
-}
-
-function createArPlatform(y, index) {
-  const group = new THREE.Group();
-  group.position.y = y;
-  const segmentCount = 12;
-  const gapIndex = (index * 5) % segmentCount;
-  const arcSize = twoPi / segmentCount;
-  const material = new THREE.MeshStandardMaterial({ color: colors.blue, roughness: 0.56, side: THREE.DoubleSide });
-
-  for (let i = 0; i < segmentCount; i += 1) {
-    if (i === gapIndex) continue;
-    const mesh = new THREE.Mesh(
-      makeArcGeometry(platformInnerRadius, platformOuterRadius, i * arcSize, (i + 1) * arcSize, platformThickness),
-      material.clone()
-    );
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-
-  arTowerRotator.add(group);
-  arPlatforms.push({ y, gapIndex, segmentCount, group });
-  arPlatforms.sort((a, b) => b.y - a.y);
-}
-
-function buildArTower() {
-  disposeGroupChildren(arRoot);
-  arBullets.length = 0;
-  arPlatforms.length = 0;
-  arTowerRotator.clear();
-  arTowerRotator.rotation.set(0, 0, 0);
-  arRoot.add(arTowerRotator);
-
-  arPillar = new THREE.Mesh(
-    new THREE.CylinderGeometry(pillarRadius, pillarRadius, arPillarHeight, 48),
-    new THREE.MeshStandardMaterial({ color: colors.pillar, roughness: 0.55 })
-  );
-  arTowerRotator.add(arPillar);
-
-  arNextPlatformY = arPlatformBaseY;
-  arNextPlatformId = 0;
-  for (let i = 0; i < arVisiblePlatformCount; i += 1) {
-    createArPlatform(arNextPlatformY, arNextPlatformId);
-    arLowestPlatformY = arNextPlatformY;
-    arNextPlatformY -= arPlatformSpacing;
-    arNextPlatformId += 1;
-  }
-
-  arBall = new THREE.Mesh(
-    new THREE.SphereGeometry(ballRadius, 32, 24),
-    new THREE.MeshStandardMaterial({ color: colors.ball, roughness: 0.35, metalness: 0.05 })
-  );
-  arBall.position.set(0, arPlatformBaseY + arPlatformSpacing * 0.4, gameplayLaneRadius);
-  arBall.castShadow = true;
-  arRoot.add(arBall);
-  arBallVelocity = 0;
-  arAmmo = arMaxAmmo;
-  arIsShooting = false;
-  arFireCooldown = 0;
-  updateArPillarClip();
-}
-
-function placeArTowerFromReticle() {
-  if (!arReticle.visible) return;
-  buildArTower();
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  arReticle.matrix.decompose(pos, quat, new THREE.Vector3());
-  arRoot.position.copy(pos);
-  arRoot.quaternion.copy(quat);
-  arCurrentScale = arScale;
-  arRoot.scale.setScalar(arCurrentScale);
-  arRoot.visible = true;
-  arTowerPlaced = true;
-  arReticle.visible = false;
-  setArStatus('Hold grip + move to rotate. Trigger to fire. Both grips to scale.');
-}
-
-function updateArPillarClip() {
-  if (!arPillar || !arBall) return;
-  arPillar.position.y = arBall.position.y + arPillarTopOffset - arPillarHeight / 2;
-}
-
-function recycleArPlatforms() {
-  if (!arBall) return;
-  for (let i = arPlatforms.length - 1; i >= 0; i -= 1) {
-    const platform = arPlatforms[i];
-    if (platform.y > arBall.position.y + arPlatformSpacing * 2.4) {
-      arTowerRotator.remove(platform.group);
-      platform.group.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) child.material.dispose();
-      });
-      arPlatforms.splice(i, 1);
-    }
-  }
-
-  while (arPlatforms.length < arVisiblePlatformCount) {
-    createArPlatform(arNextPlatformY, arNextPlatformId);
-    arLowestPlatformY = arNextPlatformY;
-    arNextPlatformY -= arPlatformSpacing;
-    arNextPlatformId += 1;
-  }
-}
-
-function fireArBullet() {
-  if (!arTowerPlaced || !arBall || arAmmo <= 0 || arScaleAdjusting) return false;
-  const mesh = new THREE.Mesh(bulletGeometry, bulletMaterial.clone());
-  mesh.position.copy(arBall.position);
-  mesh.position.y -= ballRadius + 0.08;
-  arRoot.add(mesh);
-  arBullets.push({ mesh, life: arBulletLifetime });
-  arAmmo -= 1;
-  arBallVelocity = Math.min(arBallVelocity + arShotImpulse, arShotVelocityCap);
-  playShootSound();
-  return true;
-}
-
-function updateArShooting(dt) {
-  if (!arIsShooting || arScaleAdjusting || !arTowerPlaced) return;
-  arFireCooldown -= dt;
-  while (arIsShooting && arFireCooldown <= 0) {
-    if (!fireArBullet()) {
-      arIsShooting = false;
-      arFireCooldown = 0;
-      break;
-    }
-    arFireCooldown += arFireInterval;
-  }
-}
-
-function getArControllerLocalX(controller) {
-  controller.getWorldPosition(arControllerPosition);
-  arControllerLocalPosition.copy(arControllerPosition);
-  arRoot.worldToLocal(arControllerLocalPosition);
-  return arControllerLocalPosition.x;
-}
-
-function arHapticPulse(intensity = 1.0, duration = 30) {
-  try {
-    const session = renderer.xr.getSession();
-    if (!session) return;
-    for (const source of session.inputSources) {
-      const gamepad = source.gamepad;
-      if (!gamepad) continue;
-      const actuator = gamepad.hapticActuators?.[0];
-      if (actuator?.pulse) {
-        actuator.pulse(intensity, duration).catch(() => {});
-      }
-    }
-  } catch (_) {
-    /* silent */
-  }
-}
-
-function getArControllerDistance(a, b) {
-  const aPos = new THREE.Vector3();
-  const bPos = new THREE.Vector3();
-  a.getWorldPosition(aPos);
-  b.getWorldPosition(bPos);
-  return aPos.distanceTo(bPos);
-}
-
-function startArShooting() {
-  if (!arTowerPlaced || arScaleAdjusting) return;
-  arIsShooting = true;
-  if (arFireCooldown <= 0) {
-    fireArBullet();
-    arFireCooldown = arFireInterval;
-  }
-}
-
-function stopArShooting() {
-  arIsShooting = false;
-  arFireCooldown = 0;
-}
-
-function startArScaleAdjust() {
-  const controllers = [...arGripControllers];
-  if (controllers.length < 2 || arScaleAdjusting) return;
-  arScaleAdjusting = true;
-  arScaleStartDistance = Math.max(0.05, getArControllerDistance(controllers[0], controllers[1]));
-  arScaleStartValue = arCurrentScale;
-  arActiveGripController = null;
-  setArStatus('Scaling: move grips together/apart. Release one grip to resume.');
-}
-
-function stopArScaleAdjust() {
-  if (!arScaleAdjusting) return;
-  arScaleAdjusting = false;
-  setArStatus('Hold grip + move to rotate. Trigger to fire. Both grips to scale.');
-}
-
-function updateArScaleAdjust() {
-  if (!arScaleAdjusting) return;
-  const controllers = [...arGripControllers];
-  if (controllers.length < 2) {
-    stopArScaleAdjust();
-    return;
-  }
-  const distance = getArControllerDistance(controllers[0], controllers[1]);
-  arCurrentScale = THREE.MathUtils.clamp(arScaleStartValue * (distance / arScaleStartDistance), arMinScale, arScale);
-  arRoot.scale.setScalar(arCurrentScale);
-}
-
-let arActiveGripController = null;
-let arLastGripX = 0;
-
-function updateArGripRotation() {
-  if (!arTowerPlaced || !arActiveGripController || arScaleAdjusting) return;
-  const nextX = getArControllerLocalX(arActiveGripController);
-  arTowerRotator.rotation.y += (nextX - arLastGripX) * 3.6;
-  arLastGripX = nextX;
-  const step = Math.floor(arTowerRotator.rotation.y / THREE.MathUtils.degToRad(5));
-  if (step !== arLastHapticStep) {
-    arLastHapticStep = step;
-    arHapticPulse(1.0, 30);
-  }
-}
-
-function updateArReticle(frame) {
-  if (!frame || !arHitTestSource || !arReferenceSpace || arTowerPlaced) return;
-  const results = frame.getHitTestResults(arHitTestSource);
-  if (results.length > 0) {
-    const pose = results[0].getPose(arReferenceSpace);
-    arReticle.visible = true;
-    arReticle.matrix.fromArray(pose.transform.matrix);
-  } else {
-    arReticle.visible = false;
-  }
-}
-
-function updateArBall(dt) {
-  if (!arTowerPlaced || !arBall) return;
-  const previousY = arBall.position.y;
-  arBallVelocity += arGravity * dt;
-  arBall.position.y += arBallVelocity * dt;
-  arBall.rotation.x += dt * 7;
-
-  if (arBallVelocity < 0) {
-    const bottomBefore = previousY - ballRadius;
-    const bottomNow = arBall.position.y - ballRadius;
-    for (let i = 0; i < arPlatforms.length; i += 1) {
-      const platform = arPlatforms[i];
-      const platformTop = platform.y + platformThickness / 2;
-      if (bottomBefore < platformTop || bottomNow > platformTop) continue;
-
-      const localAngle = ((Math.atan2(arBall.position.z, arBall.position.x) - arTowerRotator.rotation.y) % twoPi + twoPi) % twoPi;
-      const segment = Math.floor(localAngle / (twoPi / platform.segmentCount));
-      if (segment === platform.gapIndex) continue;
-
-      arBall.position.y = platformTop + ballRadius;
-      arBallVelocity = arBounceVelocity;
-      arAmmo = arMaxAmmo;
-      playBounceSound();
-      break;
-    }
-  }
-
-  recycleArPlatforms();
-  updateArPillarClip();
-}
-
-function updateArBullets(dt) {
-  for (let i = arBullets.length - 1; i >= 0; i -= 1) {
-    const bullet = arBullets[i];
-    bullet.life -= dt;
-    bullet.mesh.position.y -= arBulletSpeed * dt;
-    bullet.mesh.scale.setScalar(Math.max(0.35, bullet.life / arBulletLifetime));
-    if (bullet.life <= 0 || bullet.mesh.position.y < arBall.position.y - 4.5) {
-      if (bullet.mesh.parent) bullet.mesh.parent.remove(bullet.mesh);
-      bullet.mesh.material.dispose();
-      arBullets.splice(i, 1);
-    }
-  }
-}
-
-function updateArMode(dt, frame) {
-  updateArReticle(frame);
-  updateArGripRotation();
-  updateArScaleAdjust();
-  updateArShooting(dt);
-  updateArBall(dt);
-  updateArBullets(dt);
-}
-
-function endArMode() {
-  arModeActive = false;
-  arTowerPlaced = false;
-  arReferenceSpace = null;
-  arViewerSpace = null;
-  arHitTestSource = null;
-  arActiveGripController = null;
-  arGripControllers.clear();
-  arScaleAdjusting = false;
-  stopArShooting();
-  arReticle.visible = false;
-  arRoot.visible = false;
-  disposeGroupChildren(arRoot);
-  setDesktopVisible(true);
-  document.body.classList.remove('ar-active');
-  scene.background = new THREE.Color(0xeef7ff);
-  setArStatus('', false);
-}
-
-async function startArMode() {
-  if (!navigator.xr) {
-    setArStatus('WebXR is not available in this browser. Open this site in Meta Quest Browser.');
-    return;
-  }
-
-  arModeButton.disabled = true;
-  setArStatus('Checking AR support...');
-  try {
-    const supported = await navigator.xr.isSessionSupported('immersive-ar');
-    if (!supported) {
-      setArStatus('Immersive AR is not supported here. Try Meta Quest Browser on Quest 3.');
-      return;
-    }
-
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['local-floor', 'dom-overlay'],
-      domOverlay: { root: document.body },
-    });
-
-    stopShooting();
-    isPaused = true;
-    setDesktopVisible(false);
-    document.body.classList.add('ar-active');
-    scene.background = null;
-    arModeActive = true;
-    arTowerPlaced = false;
-    arRoot.visible = false;
-    setArStatus('Move the reticle onto a surface, then pull the trigger to place the tower.');
-
-    try {
-      renderer.xr.setReferenceSpaceType('local-floor');
-    } catch (_) {
-      renderer.xr.setReferenceSpaceType('local');
-    }
-    await renderer.xr.setSession(session);
-
-    arReferenceSpace = await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
-    arViewerSpace = await session.requestReferenceSpace('viewer');
-    arHitTestSource = await session.requestHitTestSource({ space: arViewerSpace });
-
-    session.addEventListener('end', () => {
-      isPaused = false;
-      endArMode();
-    }, { once: true });
-  } catch (error) {
-    arModeActive = false;
-    setDesktopVisible(true);
-    document.body.classList.remove('ar-active');
-    setArStatus(`Could not start AR: ${error.message || error}`);
-  } finally {
-    arModeButton.disabled = false;
-  }
-}
-
-for (let i = 0; i < 2; i += 1) {
-  const controller = renderer.xr.getController(i);
-  controller.addEventListener('selectstart', () => {
-    if (!arModeActive) return;
-    if (!arTowerPlaced) {
-      placeArTowerFromReticle();
-      return;
-    }
-    startArShooting();
-  });
-  controller.addEventListener('selectend', () => {
-    if (!arModeActive) return;
-    stopArShooting();
-  });
-  controller.addEventListener('squeezestart', () => {
-    if (!arModeActive || !arTowerPlaced) return;
-    arGripControllers.add(controller);
-    if (arGripControllers.size >= 2) {
-      startArScaleAdjust();
-      return;
-    }
-    arActiveGripController = controller;
-    arLastGripX = getArControllerLocalX(controller);
-    arLastHapticStep = Math.floor(arTowerRotator.rotation.y / THREE.MathUtils.degToRad(5));
-  });
-  controller.addEventListener('squeezeend', () => {
-    if (!arModeActive) return;
-    arGripControllers.delete(controller);
-    if (arScaleAdjusting && arGripControllers.size < 2) {
-      stopArScaleAdjust();
-    }
-    if (arActiveGripController === controller) {
-      arActiveGripController = arGripControllers.size > 0 ? [...arGripControllers][0] : null;
-      if (arActiveGripController) arLastGripX = getArControllerLocalX(arActiveGripController);
-    }
-  });
-  arScene.add(controller);
-}
-
 
 pauseButton.addEventListener('pointerdown', (event) => {
   event.stopPropagation();
@@ -5330,7 +4050,7 @@ shotgunIntervalInput.addEventListener('input', () => {
 });
 
 maxAmmoInput.addEventListener('input', () => {
-  maxAmmo = Math.max(1, Math.min(20, Math.floor(Number(maxAmmoInput.value) || defaultMaxAmmo)));
+  maxAmmo = parseClampedInt(maxAmmoInput.value, 1, 20, defaultMaxAmmo);
   ammo = Math.min(ammo, maxAmmo);
   rebuildAmmoUI();
   maxAmmoInput.value = String(maxAmmo);
@@ -5396,11 +4116,6 @@ coinAttractionInput.addEventListener('input', () => {
   setCoinAttractionRadius(coinAttractionInput.value);
 });
 
-arModeButton.addEventListener('click', (event) => {
-  event.stopPropagation();
-  startArMode();
-});
-
 setupInputListeners({
   get isPaused() { return isPaused; },
   get isLevelComplete() { return isLevelComplete; },
@@ -5413,27 +4128,31 @@ setupInputListeners({
   stopShooting,
   startShooting,
   drag,
+  get steamDeckModeActive() { return steamDeckMode.isActive(); },
   get timeScale() { return timeScale; },
   selectWeapon,
   setPaused,
 });
 
+const steamDeckMode = setupSteamDeckMode({
+  button: steamDeckButton,
+  renderer,
+  drag,
+  getCanPlay: () => !isGameOver && !isPaused && !isLevelComplete,
+  getTimeScale: () => timeScale,
+  setPaused,
+  startShooting,
+  stopShooting,
+});
+
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  resizeScene({ camera, renderer });
 });
 
 const clock = new THREE.Clock();
 
-function animate(_time, frame) {
+function animate() {
   const realDt = Math.min(clock.getDelta(), 0.033);
-
-  if (arModeActive) {
-    updateArMode(realDt, frame);
-    renderer.render(arScene, camera);
-    return;
-  }
 
   if (damageSlowdownTimer > 0) {
     damageSlowdownTimer = Math.max(0, damageSlowdownTimer - realDt);
@@ -5456,6 +4175,7 @@ function animate(_time, frame) {
 
   const dt = realDt * timeScale;
   scaledTime += dt;
+  steamDeckMode.update();
 
   if (!isPaused) {
     const lerpFactor = 1 - Math.pow(1 - 0.22, timeScale);
@@ -5467,9 +4187,7 @@ function animate(_time, frame) {
     updatePowerups(dt);
 
     const previousY = ball.position.y;
-    ballVelocity = Math.max(ballVelocity + gravity * dt, -terminalVelocity);
-    ball.position.y += ballVelocity * dt;
-    ball.rotation.x += dt * 8;
+    ballVelocity = integrateBallPhysics({ ball, ballVelocity, gravity, terminalVelocity, dt });
 
     scene.updateMatrixWorld(true);
     checkBallCrateHit(previousY);

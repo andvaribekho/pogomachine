@@ -1,4 +1,5 @@
 export function onPointerDown(event, ctx) {
+  if (ctx.steamDeckModeActive) return;
   if (ctx.isPaused || ctx.isLevelComplete) return;
   if (ctx.isGameOver) {
     if (ctx.leaderboardPendingClose) return;
@@ -37,6 +38,7 @@ export function onPointerDown(event, ctx) {
 }
 
 export function onPointerMove(event, ctx) {
+  if (ctx.steamDeckModeActive) return;
   if (!ctx.drag.active || ctx.isGameOver || ctx.isPaused || ctx.isLevelComplete) return;
   const dx = event.clientX - ctx.drag.x;
   ctx.drag.x = event.clientX;
@@ -44,6 +46,7 @@ export function onPointerMove(event, ctx) {
 }
 
 export function onPointerUp(event, ctx) {
+  if (ctx.steamDeckModeActive) return;
   if (ctx.controlMode === 'B' && event.pointerType === 'touch') {
     ctx.touchPointerIds.delete(event.pointerId);
     if (ctx.touchPointerIds.size < 2) {
@@ -68,6 +71,7 @@ export function onPointerUp(event, ctx) {
 }
 
 export function onPointerCancel(event, ctx) {
+  if (ctx.steamDeckModeActive) return;
   if (ctx.controlMode === 'B' && event && event.pointerType === 'touch') {
     ctx.touchPointerIds.delete(event.pointerId);
     if (ctx.touchPointerIds.size < 2) ctx.stopShooting();
@@ -81,6 +85,10 @@ export function onPointerCancel(event, ctx) {
 export function onKeyDown(event, ctx) {
   const target = event.target;
   const isTyping = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+  if (ctx.steamDeckModeActive && !isTyping && event.code === 'Space') {
+    event.preventDefault();
+    return;
+  }
   if (!isTyping && event.key === '1') {
     if (ctx.selectWeapon) ctx.selectWeapon('machinegun');
     return;
@@ -103,6 +111,7 @@ export function onKeyDown(event, ctx) {
 }
 
 export function onKeyUp(event, ctx) {
+  if (ctx.steamDeckModeActive) return;
   if (event.code === 'Space' && ctx.controlMode === 'B') {
     if (ctx.stopShooting) ctx.stopShooting();
   }
