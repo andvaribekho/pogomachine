@@ -22,7 +22,7 @@ import {
   comboShieldCost, comboShieldThreshold,
 } from './data/balance.js';
 import {
-  makeArcGeometry, angleInArc, isBlueTile, isFlashablePlatformTile,
+  angleInArc, isBlueTile,
 } from './core/utils.js';
 import {
   playBounceSound, playFailSound, playShootSound, playEmptyAmmoSound,
@@ -46,6 +46,7 @@ import {
 } from './systems/shooting.js';
 import { parseClampedFloat, parseClampedAbsFloat, parseClampedInt } from './systems/options.js';
 import { getLevelInfo as makeLevelInfo, getLevelTarget as getTargetForLevel } from './systems/levels.js';
+import { createGameAssets } from './render/assets.js';
 import { createSceneBundle, resizeScene } from './render/scene.js';
 import {
   spawnExplosion as spawnExplosionParticles,
@@ -54,12 +55,19 @@ import {
 import {
   platformY, clearPlatformBandIndex, registerPlatformInBand,
   unregisterPlatformFromBand, getPlatformsNearY,
+  disposeTile, setGrayTileCrackStage,
+  getTileAtWorldPoint, updateTileFlashes as updatePlatformTileFlashes,
+  createPlatformSystem,
 } from './entities/platforms.js';
-import { isWormTile, isGroundEnemy } from './entities/enemies.js';
+import { createEnemyMeshFactory } from './entities/enemies/meshes.js';
+import { createEnemySpawnSystem } from './entities/enemies/spawn.js';
+import { createEnemyUpdateSystem } from './entities/enemies/update.js';
+import { createEnemyCombatSystem } from './entities/enemies/combat.js';
 import { createCoinPickupSystem } from './entities/coinPickups.js';
 import { createBounceCubeSystem } from './entities/bounceCubes.js';
 import { createCrateSystem } from './entities/crates.js';
 import { createGoldBlockSystem } from './entities/goldBlocks.js';
+import { createObstacleSystem } from './entities/obstacles.js';
 import { getDomRefs } from './ui/dom.js';
 import { createCollisionDebug } from './debug/collisionDebug.js';
 
@@ -91,9 +99,6 @@ let gameOverScreenShown = false;
 
 const world = new THREE.Group();
 scene.add(world);
-
-const floaterDiscGeometry = new THREE.CylinderGeometry(ballRadius * 1.4, ballRadius * 1.4, 0.1, 16);
-const floaterMaterial = new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.6, metalness: 0.1 });
 
 let ballVelocity = 0;
 let gravity = defaultGravity;
@@ -187,108 +192,102 @@ const shakeOffset = new THREE.Vector3();
 
 const cameraBasePos = new THREE.Vector3();
 
-const pillar = new THREE.Mesh(
-  new THREE.CylinderGeometry(pillarRadius, pillarRadius, 80, 48),
-  new THREE.MeshStandardMaterial({ color: colors.pillar, roughness: 0.55 })
-);
+const {
+  floaterDiscGeometry, floaterMaterial, pillarGeometry, pillarMaterial,
+  ballGeometry, ballMaterial, bulletGeometry, bulletMaterial, batBodyGeometry,
+  batWingGeometry, spikeBodyGeometry, spikeConeGeometry, particleGeometry,
+  bounceCubeGeometry, crateGeometry, goldBlockGeometry, ledgeGeometry,
+  pillarSpikeGeometry, wormHeadGeometry, wormSegmentGeometry, turtleBodyGeometry,
+  turtleShellGeometry, turtleSpikeGeometry, jellyfishBodyGeometry,
+  jellyfishTentacleGeometry, pufferBodyGeometry, mushroomStemGeometry,
+  mushroomCapGeometry, mushroomSpotGeometry, porcupineBodyGeometry,
+  acidPuddleGeometry, acidDropletGeometry, acidSnailBodyGeometry,
+  acidSnailShellGeometry, shockwaveGeometry, pillarLaserRingGeometry,
+  coinPickupGeometry, coinPickupMaterial, shieldGeometry, cannonBaseGeometry,
+  cannonMouthGeometry, cannonRingGeometry, cannonLaserGeometry, sawBladeGeometry,
+  batBodyMaterial, batWingMaterial, spikeMaterial, crateMaterial, goldBlockMaterial,
+  ledgeMaterial, spikeHoleGeometry, platformSpikeGeometry, spikeHoleMaterial,
+  platformSpikeMaterial, pillarSpikeMaterial, wormMaterial, wormHeadMaterial,
+  yellowWormMaterial, yellowWormHeadMaterial, turtleBodyMaterial, turtleShellMaterial,
+  jellyfishMaterial, pufferMaterial, mushroomStemMaterial, mushroomCapMaterial,
+  mushroomSpotMaterial, porcupineMaterial, porcupineSpikeMaterial, acidPuddleMaterial,
+  acidSnailBodyMaterial, acidSnailShellMaterial, acidSnailCrackedShellMaterial,
+  shockwaveMaterial, pillarLaserRingMaterial, cannonMaterial, cannonWarningMaterial,
+  laserMaterial, shieldMaterial, sawBladeMaterial,
+} = createGameAssets({
+  colors,
+  ballRadius,
+  pillarRadius,
+  twoPi,
+  gameplayLaneRadius,
+  goldBlockSize,
+  ledgeRadialLength,
+  platformSpikeHeight,
+  sawBladeOuterRadius,
+  sawBladeInnerRadius,
+});
+
+const enemyMeshes = createEnemyMeshFactory({
+  assets: {
+    batBodyGeometry,
+    batWingGeometry,
+    spikeBodyGeometry,
+    spikeConeGeometry,
+    wormHeadGeometry,
+    wormSegmentGeometry,
+    turtleBodyGeometry,
+    turtleShellGeometry,
+    turtleSpikeGeometry,
+    jellyfishBodyGeometry,
+    jellyfishTentacleGeometry,
+    pufferBodyGeometry,
+    mushroomStemGeometry,
+    mushroomCapGeometry,
+    mushroomSpotGeometry,
+    porcupineBodyGeometry,
+    acidSnailBodyGeometry,
+    acidSnailShellGeometry,
+    batBodyMaterial,
+    batWingMaterial,
+    spikeMaterial,
+    wormMaterial,
+    wormHeadMaterial,
+    turtleBodyMaterial,
+    turtleShellMaterial,
+    jellyfishMaterial,
+    pufferMaterial,
+    mushroomStemMaterial,
+    mushroomCapMaterial,
+    mushroomSpotMaterial,
+    porcupineMaterial,
+    porcupineSpikeMaterial,
+    acidSnailBodyMaterial,
+    acidSnailShellMaterial,
+  },
+  twoPi,
+});
+
+const {
+  createBatMesh,
+  createSpikedBallMesh,
+  createWormMesh,
+  createTurtleMesh,
+  createJellyfishMesh,
+  createPufferBombMesh,
+  createExplosiveMushroomMesh,
+  createPorcupineMesh,
+  createAcidSnailMesh,
+} = enemyMeshes;
+
+const pillar = new THREE.Mesh(pillarGeometry, pillarMaterial);
 pillar.position.y = -30;
 pillar.receiveShadow = true;
 world.add(pillar);
 
-const ball = new THREE.Mesh(
-  new THREE.SphereGeometry(ballRadius, 32, 24),
-  new THREE.MeshStandardMaterial({ color: colors.ball, roughness: 0.35, metalness: 0.05 })
-);
+const ball = new THREE.Mesh(ballGeometry, ballMaterial);
 ball.position.set(0, ballStartY, platformOuterRadius - 0.8);
 ball.castShadow = true;
 scene.add(ball);
-
-const bulletGeometry = new THREE.SphereGeometry(0.095, 16, 12);
-const bulletMaterial = new THREE.MeshBasicMaterial({ color: colors.bullet });
-const batBodyGeometry = new THREE.SphereGeometry(0.18, 16, 10);
-const batWingGeometry = new THREE.BoxGeometry(0.46, 0.045, 0.2);
-const spikeBodyGeometry = new THREE.SphereGeometry(0.28, 20, 14);
-const spikeConeGeometry = new THREE.ConeGeometry(0.075, 0.28, 10);
-const particleGeometry = new THREE.SphereGeometry(0.045, 8, 6);
-const bounceCubeGeometry = new THREE.BoxGeometry(0.14, 0.14, 0.14);
-const crateGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
-const goldBlockGeometry = new THREE.BoxGeometry(goldBlockSize, goldBlockSize, goldBlockSize);
-const ledgeGeometry = new THREE.BoxGeometry(ledgeRadialLength, 0.18, 0.72);
-const pillarSpikeGeometry = new THREE.ConeGeometry(0.14, ledgeRadialLength, 4);
-const wormHeadGeometry = new THREE.SphereGeometry(0.18, 14, 10);
-const wormSegmentGeometry = new THREE.SphereGeometry(0.15, 14, 10);
-const turtleBodyGeometry = new THREE.SphereGeometry(0.22, 16, 12);
-const turtleShellGeometry = new THREE.SphereGeometry(0.28, 18, 12);
-const turtleSpikeGeometry = new THREE.ConeGeometry(0.055, 0.18, 8);
-const jellyfishBodyGeometry = new THREE.SphereGeometry(0.24, 18, 12);
-const jellyfishTentacleGeometry = new THREE.CylinderGeometry(0.018, 0.012, 0.38, 6);
-const pufferBodyGeometry = new THREE.SphereGeometry(0.25, 18, 12);
-const mushroomStemGeometry = new THREE.CylinderGeometry(0.1, 0.14, 0.32, 12);
-const mushroomCapGeometry = new THREE.SphereGeometry(0.26, 18, 12);
-const mushroomSpotGeometry = new THREE.SphereGeometry(0.045, 8, 6);
-const porcupineBodyGeometry = new THREE.SphereGeometry(0.25, 16, 12);
-const acidPuddleGeometry = new THREE.CircleGeometry(0.22, 20);
-const acidDropletGeometry = new THREE.SphereGeometry(0.1, 10, 8);
-const acidSnailBodyGeometry = new THREE.SphereGeometry(0.22, 14, 10);
-const acidSnailShellGeometry = new THREE.SphereGeometry(0.28, 16, 12);
-const shockwaveGeometry = new THREE.SphereGeometry(1, 24, 16);
-const pillarLaserRingGeometry = new THREE.TorusGeometry(gameplayLaneRadius, 0.035, 8, 96);
-const coinPickupGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
-const coinPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xb8860b, emissiveIntensity: 0.3, roughness: 0.3, metalness: 0.7 });
-const shieldGeometry = new THREE.BoxGeometry(0.42, 0.14, 0.42);
-const cannonBaseGeometry = new THREE.CylinderGeometry(0.18, 0.24, 0.22, 16);
-const cannonMouthGeometry = new THREE.CylinderGeometry(0.11, 0.13, 0.34, 16);
-const cannonRingGeometry = new THREE.TorusGeometry(0.2, 0.018, 8, 32);
-const cannonLaserGeometry = new THREE.CylinderGeometry(0.11, 0.11, 36, 16);
-const sawBladeShape = new THREE.Shape();
-for (let i = 0; i <= 32; i += 1) {
-  const angle = (i / 32) * twoPi;
-  const radius = i % 2 === 0 ? sawBladeOuterRadius : sawBladeOuterRadius * 0.76;
-  const x = Math.cos(angle) * radius;
-  const y = Math.sin(angle) * radius;
-  if (i === 0) sawBladeShape.moveTo(x, y);
-  else sawBladeShape.lineTo(x, y);
-}
-const sawBladeHole = new THREE.Path();
-sawBladeHole.absarc(0, 0, sawBladeInnerRadius, 0, twoPi, false);
-sawBladeShape.holes.push(sawBladeHole);
-const sawBladeGeometry = new THREE.ExtrudeGeometry(sawBladeShape, { depth: 0.12, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.025, bevelSegments: 1 });
-sawBladeGeometry.center();
-const batBodyMaterial = new THREE.MeshStandardMaterial({ color: colors.bat, roughness: 0.62 });
-const batWingMaterial = new THREE.MeshStandardMaterial({ color: colors.batWing, roughness: 0.7 });
-const spikeMaterial = new THREE.MeshStandardMaterial({ color: colors.spike, roughness: 0.55 });
-const crateMaterial = new THREE.MeshStandardMaterial({ color: colors.crate, roughness: 0.72 });
-const goldBlockMaterial = new THREE.MeshStandardMaterial({ color: colors.gold, emissive: 0x8a5a00, emissiveIntensity: 0.25, roughness: 0.28, metalness: 0.65 });
-const ledgeMaterial = new THREE.MeshStandardMaterial({ color: 0x546e7a, roughness: 0.58, metalness: 0.05 });
-const spikeHoleGeometry = new THREE.BoxGeometry(0.26, 0.018, 0.26);
-const platformSpikeGeometry = new THREE.ConeGeometry(0.16, platformSpikeHeight, 4);
-const spikeHoleMaterial = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.82 });
-const platformSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
-const pillarSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
-const wormMaterial = new THREE.MeshStandardMaterial({ color: colors.worm, roughness: 0.5, metalness: 0.08 });
-const wormHeadMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.45, metalness: 0.08 });
-const yellowWormMaterial = new THREE.MeshStandardMaterial({ color: colors.yellowWorm, roughness: 0.5, metalness: 0.08 });
-const yellowWormHeadMaterial = new THREE.MeshStandardMaterial({ color: colors.yellowWormHead, roughness: 0.45, metalness: 0.08 });
-const turtleBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.5, metalness: 0.05 });
-const turtleShellMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, emissive: 0x7a0000, emissiveIntensity: 0.18, roughness: 0.44, metalness: 0.08 });
-const jellyfishMaterial = new THREE.MeshStandardMaterial({ color: 0x9c27b0, emissive: 0x4a148c, emissiveIntensity: 0.28, roughness: 0.36, transparent: true, opacity: 0.82 });
-const pufferMaterial = new THREE.MeshStandardMaterial({ color: 0xffc107, emissive: 0xff6f00, emissiveIntensity: 0.22, roughness: 0.48 });
-const mushroomStemMaterial = new THREE.MeshStandardMaterial({ color: 0xfdd835, emissive: 0x8a6d00, emissiveIntensity: 0.14, roughness: 0.55 });
-const mushroomCapMaterial = new THREE.MeshStandardMaterial({ color: 0xffeb3b, emissive: 0xff9800, emissiveIntensity: 0.2, roughness: 0.5 });
-const mushroomSpotMaterial = new THREE.MeshStandardMaterial({ color: 0xe53935, emissive: 0x7f0000, emissiveIntensity: 0.18, roughness: 0.48 });
-const porcupineMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.56, metalness: 0.04 });
-const porcupineSpikeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, roughness: 0.48, metalness: 0.08 });
-const acidPuddleMaterial = new THREE.MeshStandardMaterial({ color: colors.acid, emissive: 0x2e7d32, emissiveIntensity: 0.45, roughness: 0.6, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
-const acidSnailBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x558b2f, roughness: 0.55, metalness: 0.05 });
-const acidSnailShellMaterial = new THREE.MeshStandardMaterial({ color: 0x795548, roughness: 0.5, metalness: 0.08 });
-const acidSnailCrackedShellMaterial = new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.5, metalness: 0.08, emissive: 0x3e2723, emissiveIntensity: 0.3 });
-const shockwaveMaterial = new THREE.MeshBasicMaterial({ color: 0xff9800, transparent: true, opacity: 0.42, wireframe: true, depthWrite: false });
-const pillarLaserRingMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.72 });
-const cannonMaterial = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.45, metalness: 0.35 });
-const cannonWarningMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.85 });
-const laserMaterial = new THREE.MeshBasicMaterial({ color: 0xff1744, transparent: true, opacity: 0.65 });
-const shieldMaterial = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x00bcd4, emissiveIntensity: 0.35 });
-const sawBladeMaterial = new THREE.MeshStandardMaterial({ color: 0xff1744, emissive: 0x8b0000, emissiveIntensity: 0.28, roughness: 0.34, metalness: 0.65 });
 
 const shieldMesh = new THREE.Mesh(shieldGeometry, shieldMaterial);
 shieldMesh.visible = false;
@@ -316,207 +315,8 @@ function getBulletLaneRadius() {
   return Math.hypot(ball.position.x, ball.position.z);
 }
 
-function makeCrackLine(startAngle, endAngle) {
-  const centerAngle = (startAngle + endAngle) / 2;
-  const points = [
-    new THREE.Vector3(Math.cos(centerAngle - 0.08) * 1.35, platformThickness / 2 + 0.014, Math.sin(centerAngle - 0.08) * 1.35),
-    new THREE.Vector3(Math.cos(centerAngle + 0.04) * 1.82, platformThickness / 2 + 0.014, Math.sin(centerAngle + 0.04) * 1.82),
-    new THREE.Vector3(Math.cos(centerAngle - 0.03) * 2.18, platformThickness / 2 + 0.014, Math.sin(centerAngle - 0.03) * 2.18),
-    new THREE.Vector3(Math.cos(centerAngle + 0.08) * 2.72, platformThickness / 2 + 0.014, Math.sin(centerAngle + 0.08) * 2.72),
-  ];
-  return new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color: colors.crack })
-  );
-}
-
-function makeGrayCrackLines(startAngle, endAngle, stage) {
-  const group = new THREE.Group();
-  const centerAngle = (startAngle + endAngle) / 2;
-  const lineCount = stage >= 2 ? 3 : 1;
-
-  for (let i = 0; i < lineCount; i += 1) {
-    const offset = (i - (lineCount - 1) / 2) * 0.09;
-    const spread = stage >= 2 ? 0.14 : 0.08;
-    const points = [
-      new THREE.Vector3(Math.cos(centerAngle - spread + offset) * 1.24, platformThickness / 2 + 0.018, Math.sin(centerAngle - spread + offset) * 1.24),
-      new THREE.Vector3(Math.cos(centerAngle + 0.03 - offset) * 1.7, platformThickness / 2 + 0.018, Math.sin(centerAngle + 0.03 - offset) * 1.7),
-      new THREE.Vector3(Math.cos(centerAngle - 0.06 + offset) * 2.2, platformThickness / 2 + 0.018, Math.sin(centerAngle - 0.06 + offset) * 2.2),
-      new THREE.Vector3(Math.cos(centerAngle + spread - offset) * 2.82, platformThickness / 2 + 0.018, Math.sin(centerAngle + spread - offset) * 2.82),
-    ];
-    group.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(points),
-      new THREE.LineBasicMaterial({ color: colors.grayCrack })
-    ));
-  }
-
-  return group;
-}
-
-function shouldCreateSpikePlatform(id, isFinal) {
-  if (isFinal || id <= 1) return false;
-  const target = getLevelTarget();
-  const required = Math.ceil(target * 0.1);
-  if (spikePlatformsThisLevel >= required) return Math.random() < 0.045;
-  const remainingNonFinalPlatforms = Math.max(0, target - id);
-  const remainingRequired = required - spikePlatformsThisLevel;
-  return id % 10 === 5 || remainingNonFinalPlatforms <= remainingRequired;
-}
-
-function createSpikeTrap(platformGroup, tile) {
-  const group = new THREE.Group();
-  const spikes = [];
-  const centerAngle = (tile.start + tile.end) / 2;
-  const arcSpan = tile.end - tile.start;
-  const angleStep = Math.min(0.09, arcSpan * 0.2);
-  const angles = [centerAngle - angleStep, centerAngle, centerAngle + angleStep];
-
-  for (const angle of angles) {
-    const hole = new THREE.Mesh(spikeHoleGeometry.clone(), spikeHoleMaterial.clone());
-    hole.position.set(
-      Math.cos(angle) * gameplayLaneRadius,
-      platformThickness / 2 + 0.012,
-      Math.sin(angle) * gameplayLaneRadius
-    );
-    hole.rotation.y = -angle + Math.PI / 4;
-    group.add(hole);
-
-    const spike = new THREE.Mesh(platformSpikeGeometry.clone(), platformSpikeMaterial.clone());
-    spike.position.set(
-      Math.cos(angle) * gameplayLaneRadius,
-      platformThickness / 2 + platformSpikeHeight / 2 - 0.02,
-      Math.sin(angle) * gameplayLaneRadius
-    );
-    spike.rotation.y = -angle + Math.PI / 4;
-    spike.castShadow = true;
-    group.add(spike);
-    spikes.push({ mesh: spike, angle, colliderPosition: new THREE.Vector3() });
-  }
-
-  platformGroup.add(group);
-  tile.spikeTrap = true;
-  const trap = { group, platformGroup, spikes, timer: Math.random() * spikeCycleDuration, raiseAmount: 1 };
-  spikeTraps.push(trap);
-  spikePlatformsThisLevel += 1;
-}
-
-function maybeCreateSpikeTrap(platformGroup, tiles, id, isFinal) {
-  if (!shouldCreateSpikePlatform(id, isFinal)) return;
-  const validTiles = tiles.filter(tile => tile.type === 'blue' && !tile.broken && !tile.spikeTrap);
-  if (!validTiles.length) return;
-  createSpikeTrap(platformGroup, validTiles[Math.floor(Math.random() * validTiles.length)]);
-}
-
-function getPlatformTileColor(type) {
-  if (type === 'red') return colors.red;
-  if (type === 'finish') return colors.finish;
-  if (type === 'gray') return colors.gray;
-  if (type === 'shop') return colors.shop;
-  return colors.blue;
-}
-
 function createPlatform(y, id, options = {}) {
-  const group = new THREE.Group();
-  group.position.y = y;
-
-  const isFinal = options.final === true;
-  const difficulty = Math.min(id / 18, 1);
-  const segmentCount = isFinal ? 16 : Math.floor(8 + difficulty * 5);
-  const gapCount = isFinal ? 0 : Math.min(4, 2 + Math.floor(difficulty * 3));
-  const redChance = isFinal ? 0 : 0.08 + difficulty * 0.17;
-  const grayChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
-  const crackedChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
-  const arcSize = twoPi / segmentCount;
-  const tiles = [];
-
-  const gapIndexes = new Set();
-  while (gapIndexes.size < gapCount) {
-    gapIndexes.add(Math.floor(Math.random() * segmentCount));
-  }
-
-  for (let i = 0; i < segmentCount; i += 1) {
-    if (gapIndexes.has(i)) continue;
-
-    const start = i * arcSize;
-    const end = (i + 1) * arcSize;
-    let type = isFinal ? 'finish' : Math.random() < redChance && id > 1 ? 'red' : 'blue';
-    if (type === 'blue' && Math.random() < grayChance && id > 2) {
-      type = 'gray';
-    }
-    if (type === 'blue' && Math.random() < crackedChance && id > 2) {
-      type = 'crackedBlue';
-    }
-    const geometry = makeArcGeometry(platformInnerRadius, platformOuterRadius, start, end, platformThickness);
-    const tileColor = getPlatformTileColor(type);
-    const material = new THREE.MeshStandardMaterial({ color: tileColor, roughness: 0.6, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, material);
-    const crackLine = type === 'crackedBlue' ? makeCrackLine(start, end) : null;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-    if (crackLine) group.add(crackLine);
-    const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false, hitCount: 0, spikeTrap: false };
-    tiles.push(tile);
-  }
-
-  maybeCreateSpikeTrap(group, tiles, id, isFinal);
-
-  if (!isFinal) {
-    for (let c = 0; c < 3; c += 1) {
-      if (Math.random() < 0.055) {
-        const crateAngle = Math.random() * twoPi;
-        const crateRadius = gameplayLaneRadius;
-        const crateTile = tiles.find(t =>
-          t.type === 'blue' && !t.broken && !t.spikeTrap &&
-          angleInArc(crateAngle, t.start, t.end)
-        );
-        if (crateTile) {
-          createCrate(group, crateAngle, crateRadius);
-        }
-      }
-    }
-  }
-
-  if (!isFinal && !shopTilePlat && id === 3) {
-    const shopTile = tiles.find(t => t.type === 'blue' && !t.broken && !t.spikeTrap);
-    if (shopTile) {
-      shopTile.type = 'shop';
-      shopTile.material.color.setHex(colors.shop);
-      shopTilePlat = { id, group };
-      shopTileRef = shopTile;
-
-      const shopAngle = (shopTile.start + shopTile.end) / 2;
-      const signCanvas = document.createElement('canvas');
-      signCanvas.width = 128;
-      signCanvas.height = 64;
-      const ctx = signCanvas.getContext('2d');
-      ctx.fillStyle = '#ffc107';
-      ctx.fillRect(0, 0, 128, 64);
-      ctx.fillStyle = '#15202b';
-      ctx.font = 'bold 36px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Shop', 64, 32);
-      const signTexture = new THREE.CanvasTexture(signCanvas);
-      const signMat = new THREE.MeshStandardMaterial({ map: signTexture, roughness: 0.6 });
-      const signGeo = new THREE.PlaneGeometry(0.7, 0.35);
-      const signMesh = new THREE.Mesh(signGeo, signMat);
-      signMesh.position.set(
-        Math.cos(shopAngle) * (pillarRadius + 0.02),
-        0,
-        Math.sin(shopAngle) * (pillarRadius + 0.02)
-      );
-      signMesh.rotation.y = -shopAngle + Math.PI / 2;
-      group.add(signMesh);
-    }
-  }
-
-  world.add(group);
-  const platData = { id, group, tiles, scored: false, final: isFinal };
-  platforms.push(platData);
-  registerPlatformInBand(platData);
-
-  if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
-  if (!isFinal) maybeSpawnCannon(platData, id);
+  platformSystem.createPlatform(y, id, options);
 }
 
 function createCrate(platformGroup, angle, radius) {
@@ -536,294 +336,19 @@ function spawnGoldBlocksForLevel() {
 }
 
 function createPillarSpike(y, angle) {
-  const group = new THREE.Group();
-  group.position.set(Math.cos(angle) * pillarRadius, y, Math.sin(angle) * pillarRadius);
-  group.rotation.y = -angle;
-
-  const mesh = new THREE.Mesh(pillarSpikeGeometry.clone(), pillarSpikeMaterial.clone());
-  mesh.rotation.z = -Math.PI / 2;
-  mesh.position.x = ledgeRadialLength / 2;
-  mesh.castShadow = true;
-  group.add(mesh);
-
-  world.add(group);
-  pillarSpikes.push({ group, mesh, colliderPosition: new THREE.Vector3() });
+  obstacleSystem.createPillarSpike(y, angle);
 }
 
 function spawnPillarSpikesForLevel() {
-  const target = getLevelTarget();
-  const intervalCount = Math.max(1, target - 1);
-  const usedIntervals = new Set();
-
-  while (usedIntervals.size < Math.min(4, intervalCount)) {
-    usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
-  }
-
-  for (const interval of usedIntervals) {
-    const y = -(interval + 0.35 + Math.random() * 0.3) * platformSpacing;
-    const angle = Math.random() * twoPi;
-    createPillarSpike(y, angle);
-  }
+  obstacleSystem.spawnPillarSpikesForLevel();
 }
 
 function createFloater(y, angle) {
-  const mesh = new THREE.Mesh(floaterDiscGeometry, floaterMaterial.clone());
-  mesh.position.set(
-    Math.cos(angle) * gameplayLaneRadius,
-    y,
-    Math.sin(angle) * gameplayLaneRadius
-  );
-  mesh.castShadow = true;
-  world.add(mesh);
-  floaters.push({ mesh, angle, y, used: false });
+  obstacleSystem.createFloater(y, angle);
 }
 
 function spawnFloatersForLevel() {
-  const target = getLevelTarget();
-  const intervalCount = Math.max(1, target - 1);
-  const usedIntervals = new Set();
-
-  while (usedIntervals.size < Math.min(24, intervalCount)) {
-    usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
-  }
-
-  for (const interval of usedIntervals) {
-    const y = -(interval + 0.35 + Math.random() * 0.3) * platformSpacing;
-    const angle = Math.random() * twoPi;
-    createFloater(y, angle);
-  }
-}
-
-function createBatMesh() {
-  const group = new THREE.Group();
-  group.scale.setScalar(1.105);
-  const body = new THREE.Mesh(batBodyGeometry, batBodyMaterial.clone());
-  body.scale.set(1, 0.72, 1.25);
-  group.add(body);
-
-  const leftWing = new THREE.Mesh(batWingGeometry, batWingMaterial.clone());
-  const rightWing = new THREE.Mesh(batWingGeometry, batWingMaterial.clone());
-  leftWing.position.x = -0.32;
-  rightWing.position.x = 0.32;
-  leftWing.rotation.z = -0.28;
-  rightWing.rotation.z = 0.28;
-  group.add(leftWing, rightWing);
-
-  return { group, leftWing, rightWing };
-}
-
-function createSpikedBallMesh() {
-  const group = new THREE.Group();
-  const material = spikeMaterial.clone();
-  const body = new THREE.Mesh(spikeBodyGeometry, material);
-  group.add(body);
-
-  const directions = [
-    new THREE.Vector3(1, 0, 0),
-    new THREE.Vector3(-1, 0, 0),
-    new THREE.Vector3(0, 1, 0),
-    new THREE.Vector3(0, -1, 0),
-    new THREE.Vector3(0, 0, 1),
-    new THREE.Vector3(0, 0, -1),
-    new THREE.Vector3(0.7, 0.45, 0.45).normalize(),
-    new THREE.Vector3(-0.7, -0.45, -0.45).normalize(),
-  ];
-
-  for (const direction of directions) {
-    const spike = new THREE.Mesh(spikeConeGeometry, material);
-    spike.position.copy(direction).multiplyScalar(0.35);
-    spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
-    group.add(spike);
-  }
-
-  return { group, material };
-}
-
-function createWormMesh(options = {}) {
-  const {
-    bodyMaterialTemplate = wormMaterial,
-    headMaterialTemplate = wormHeadMaterial,
-    scale = 1,
-  } = options;
-  const group = new THREE.Group();
-  group.scale.setScalar(scale);
-  const segments = [];
-  for (let i = 0; i < 4; i += 1) {
-    const geometry = i === 0 ? wormHeadGeometry : wormSegmentGeometry;
-    const material = i === 0 ? headMaterialTemplate.clone() : bodyMaterialTemplate.clone();
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.x = -i * 0.24;
-    mesh.scale.y = 0.62;
-    mesh.castShadow = true;
-    group.add(mesh);
-    segments.push(mesh);
-  }
-  return { group, segments };
-}
-
-function createTurtleMesh() {
-  const group = new THREE.Group();
-  const materials = [];
-
-  const bodyMaterial = turtleBodyMaterial.clone();
-  const shellMaterial = turtleShellMaterial.clone();
-  materials.push(bodyMaterial, shellMaterial);
-
-  const body = new THREE.Mesh(turtleBodyGeometry, bodyMaterial);
-  body.scale.set(1.35, 0.42, 0.9);
-  body.position.y = -0.02;
-  body.castShadow = true;
-  group.add(body);
-
-  const shell = new THREE.Mesh(turtleShellGeometry, shellMaterial);
-  shell.scale.set(1.08, 0.58, 0.95);
-  shell.position.y = 0.08;
-  shell.castShadow = true;
-  group.add(shell);
-
-  const head = new THREE.Mesh(wormHeadGeometry, bodyMaterial);
-  head.scale.set(0.7, 0.58, 0.7);
-  head.position.set(0.33, 0.03, 0);
-  head.castShadow = true;
-  group.add(head);
-
-  const spikePositions = [
-    [-0.18, 0.3, 0],
-    [0.02, 0.34, -0.12],
-    [0.02, 0.34, 0.12],
-    [0.22, 0.28, 0],
-  ];
-  for (const [x, y, z] of spikePositions) {
-    const spike = new THREE.Mesh(turtleSpikeGeometry, shellMaterial);
-    spike.position.set(x, y, z);
-    spike.castShadow = true;
-    group.add(spike);
-  }
-
-  return { group, materials };
-}
-
-function createJellyfishMesh() {
-  const group = new THREE.Group();
-  const material = jellyfishMaterial.clone();
-  const body = new THREE.Mesh(jellyfishBodyGeometry, material);
-  body.scale.set(1, 0.7, 1);
-  body.castShadow = true;
-  group.add(body);
-  for (let i = 0; i < 5; i += 1) {
-    const tentacle = new THREE.Mesh(jellyfishTentacleGeometry, material);
-    const angle = (i / 5) * twoPi;
-    tentacle.position.set(Math.cos(angle) * 0.12, -0.25, Math.sin(angle) * 0.12);
-    group.add(tentacle);
-  }
-  return { group, material };
-}
-
-function createPufferBombMesh() {
-  const group = new THREE.Group();
-  const material = pufferMaterial.clone();
-  const body = new THREE.Mesh(pufferBodyGeometry, material);
-  body.castShadow = true;
-  group.add(body);
-  for (let i = 0; i < 8; i += 1) {
-    const angle = (i / 8) * twoPi;
-    const spike = new THREE.Mesh(turtleSpikeGeometry, material);
-    const dir = new THREE.Vector3(Math.cos(angle), 0.2, Math.sin(angle)).normalize();
-    spike.position.copy(dir).multiplyScalar(0.24);
-    spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-    group.add(spike);
-  }
-  return { group, material };
-}
-
-function createExplosiveMushroomMesh() {
-  const group = new THREE.Group();
-  const stemMaterial = mushroomStemMaterial.clone();
-  const capMaterial = mushroomCapMaterial.clone();
-  const spotMaterial = mushroomSpotMaterial.clone();
-
-  const stem = new THREE.Mesh(mushroomStemGeometry, stemMaterial);
-  stem.position.y = -0.08;
-  stem.castShadow = true;
-  group.add(stem);
-
-  const cap = new THREE.Mesh(mushroomCapGeometry, capMaterial);
-  cap.scale.set(1.25, 0.58, 1.25);
-  cap.position.y = 0.11;
-  cap.castShadow = true;
-  group.add(cap);
-
-  const spotPositions = [
-    [0, 0.19, -0.2],
-    [-0.14, 0.22, -0.06],
-    [0.14, 0.22, -0.06],
-    [-0.08, 0.24, 0.12],
-    [0.11, 0.23, 0.13],
-  ];
-  for (const [x, y, z] of spotPositions) {
-    const spot = new THREE.Mesh(mushroomSpotGeometry, spotMaterial);
-    spot.position.set(x, y, z);
-    spot.scale.y = 0.35;
-    group.add(spot);
-  }
-
-  return { group, stemMaterial, capMaterial, spotMaterial };
-}
-
-function createPorcupineMesh() {
-  const group = new THREE.Group();
-  const material = porcupineMaterial.clone();
-  const spikeMaterial = porcupineSpikeMaterial.clone();
-  const body = new THREE.Mesh(porcupineBodyGeometry, material);
-  body.scale.set(1.25, 0.55, 0.8);
-  body.castShadow = true;
-  group.add(body);
-
-  const head = new THREE.Mesh(wormHeadGeometry, material);
-  head.scale.set(0.72, 0.62, 0.72);
-  head.position.set(0.28, 0.03, 0);
-  head.castShadow = true;
-  group.add(head);
-
-  const spikes = [];
-  for (let i = 0; i < 7; i += 1) {
-    const spike = new THREE.Mesh(turtleSpikeGeometry, spikeMaterial);
-    const x = -0.22 + i * 0.075;
-    spike.position.set(x, 0.18 + Math.sin(i) * 0.025, (i % 2 === 0 ? -1 : 1) * 0.09);
-spike.rotation.z = 0;
-    spike.visible = false;
-    group.add(spike);
-    spikes.push(spike);
-  }
-  return { group, material, spikeMaterial, spikes };
-}
-
-function createAcidSnailMesh() {
-  const group = new THREE.Group();
-  const bodyMaterial = acidSnailBodyMaterial.clone();
-  const body = new THREE.Mesh(acidSnailBodyGeometry, bodyMaterial);
-  body.scale.set(1, 0.6, 1.3);
-  body.position.set(0.12, 0.05, 0);
-  body.castShadow = true;
-  group.add(body);
-
-  const shellMaterial = acidSnailShellMaterial.clone();
-  const shell = new THREE.Mesh(acidSnailShellGeometry, shellMaterial);
-  shell.scale.set(1, 0.7, 1);
-  shell.position.set(-0.05, 0.1, 0);
-  shell.castShadow = true;
-  group.add(shell);
-
-  const eyeGeo = new THREE.SphereGeometry(0.04, 8, 6);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.3 });
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(0.26, 0.1, 0.07);
-  group.add(eyeL);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat.clone());
-  eyeR.position.set(0.26, 0.1, -0.07);
-  group.add(eyeR);
-
-  return { group, bodyMaterial, shellMaterial, body, shell };
+  obstacleSystem.spawnFloatersForLevel();
 }
 
 function spawnAcidPuddle(platformData, angle, radius, isDeath) {
@@ -858,45 +383,7 @@ function spawnAcidPuddle(platformData, angle, radius, isDeath) {
 }
 
 function updateFloaters(dt) {
-  if (ballVelocity >= 0) return;
-
-  const bottomY = ball.position.y - ballRadius;
-  const previousBottomY = bottomY - ballVelocity * dt;
-
-  for (let i = floaters.length - 1; i >= 0; i -= 1) {
-    const floater = floaters[i];
-    if (floater.used) continue;
-
-    const worldPos = floater.mesh.getWorldPosition(_floaterWorldPos);
-    const fY = worldPos.y;
-    const floaterTop = fY + 0.05;
-
-    if (previousBottomY > floaterTop && bottomY <= floaterTop) {
-      const dx = ball.position.x - worldPos.x;
-      const dz = ball.position.z - worldPos.z;
-      const radialDist = Math.hypot(dx, dz);
-      if (radialDist <= ballRadius) {
-        floater.used = true;
-        spawnExplosion(worldPos.clone(), 0x9e9e9e, 8);
-        world.remove(floater.mesh);
-        floater.mesh.geometry.dispose();
-        floaters.splice(i, 1);
-        ballVelocity = Math.max(ballVelocity, stompImpulse);
-        if (reloadAmmo()) {
-          spawnFloatingText('Reload', ball.position);
-          playReloadSound();
-        }
-        playBounceSound();
-        continue;
-      }
-    }
-
-    if (worldPos.y > ball.position.y + 15) {
-      world.remove(floater.mesh);
-      floater.mesh.geometry.dispose();
-      floaters.splice(i, 1);
-    }
-  }
+  obstacleSystem.updateFloaters(dt);
 }
 
 function updateAcidPuddles(dt) {
@@ -1057,141 +544,19 @@ function clearAcidPuddles() {
 }
 
 function createAcidSnail(platformData, id, tile) {
-  const snail = createAcidSnailMesh();
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'acidSnail',
-    id,
-    group: snail.group,
-    bodyMaterial: snail.bodyMaterial,
-    shellMaterial: snail.shellMaterial,
-    body: snail.body,
-    shell: snail.shell,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.3 + Math.random() * 0.2,
-    collisionRadius: 0.36,
-    hp: 999,
-    flashTimer: 0,
-    shellIntact: true,
-    trailTimer: 0,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createAcidSnail(platformData, id, tile);
 }
 
 function createCannonMesh() {
-  const group = new THREE.Group();
-  const base = new THREE.Mesh(cannonBaseGeometry.clone(), cannonMaterial.clone());
-  base.position.y = 0.11;
-  base.castShadow = true;
-  group.add(base);
-
-  const mouth = new THREE.Mesh(cannonMouthGeometry.clone(), cannonMaterial.clone());
-  mouth.position.y = 0.34;
-  mouth.castShadow = true;
-  group.add(mouth);
-
-  const ring = new THREE.Mesh(cannonRingGeometry.clone(), cannonWarningMaterial.clone());
-  ring.position.y = 0.56;
-  ring.rotation.x = Math.PI / 2;
-  ring.visible = false;
-  group.add(ring);
-
-  const laser = new THREE.Mesh(cannonLaserGeometry.clone(), laserMaterial.clone());
-  laser.position.y = 18.56;
-  laser.visible = false;
-  group.add(laser);
-
-  return { group, base, mouth, ring, laser };
+  return obstacleSystem.createCannonMesh();
 }
 
 function maybeSpawnCannon(platformData, id) {
-  if (id < 7 || Math.random() > 0.16) return;
-  const validTiles = platformData.tiles.filter(tile => tile.type === 'blue' && !tile.broken);
-  if (validTiles.length === 0) return;
-
-  const playerLane = ((getBulletLaneAngle() - world.rotation.y) % twoPi + twoPi) % twoPi;
-  const cannonTile = validTiles.find(tile => angleInArc(playerLane, tile.start, tile.end));
-  if (!cannonTile) return;
-
-  const cannon = createCannonMesh();
-  const angle = playerLane;
-  const radius = platformOuterRadius - 0.8;
-  cannon.group.position.set(
-    Math.cos(angle) * radius,
-    platformThickness / 2 + 0.02,
-    Math.sin(angle) * radius
-  );
-  cannon.group.rotation.y = -angle + Math.PI / 2;
-  platformData.group.add(cannon.group);
-  cannons.push({
-    ...cannon,
-    platformData,
-    angle,
-    radius,
-    state: 'idle',
-    charge: 0,
-    cooldown: 0,
-    laserTimer: 0,
-    damagedThisShot: false,
-    hp: 5,
-    flashTimer: 0,
-  });
+  obstacleSystem.maybeSpawnCannon(platformData, id);
 }
 
 function positionEnemy(enemy) {
-  if (enemy.type === 'pillarWorm') {
-    enemy.localAngle = (enemy.localAngle + twoPi) % twoPi;
-    enemy.group.position.set(0, enemy.y, 0);
-    enemy.group.rotation.set(0, 0, 0);
-    for (let i = 0; i < enemy.segments.length; i += 1) {
-      const segmentAngle = enemy.localAngle - i * enemy.segmentArc * enemy.direction;
-      const segment = enemy.segments[i];
-      segment.position.set(
-        Math.cos(segmentAngle) * enemy.visualRadius,
-        Math.sin(performance.now() * 0.008 + i) * 0.015,
-        Math.sin(segmentAngle) * enemy.visualRadius
-      );
-      segment.rotation.y = -segmentAngle + Math.PI / 2;
-      segment.rotation.z = Math.PI / 2;
-    }
-
-    enemy.interactable = false;
-    enemy.collisionPosition.set(
-      Math.cos(enemy.localAngle) * enemy.visualRadius,
-      0,
-      Math.sin(enemy.localAngle) * enemy.visualRadius
-    );
-    enemy.group.localToWorld(enemy.collisionPosition);
-    return;
-  }
-
-  if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') {
-    const localPosition = _enemyLocalPosition.set(
-      Math.cos(enemy.localAngle) * enemy.orbitRadius,
-      platformThickness / 2 + 0.2,
-      Math.sin(enemy.localAngle) * enemy.orbitRadius
-    );
-    enemy.platformData.group.localToWorld(localPosition);
-    enemy.group.position.copy(localPosition);
-    enemy.group.rotation.y = world.rotation.y - enemy.localAngle + Math.PI / 2;
-    return;
-  }
-
-  if (enemy.type === 'explosiveMushroom') return;
-
-  enemy.group.position.set(
-    Math.cos(enemy.angle) * enemy.orbitRadius,
-    enemy.y,
-    Math.sin(enemy.angle) * enemy.orbitRadius
-  );
-  enemy.group.rotation.y = -enemy.angle + Math.PI / 2;
+  enemyUpdateSystem.positionEnemy(enemy);
 }
 
 function getEnemyWorldPosition(enemy, target = _enemyWorldPosition) {
@@ -1201,539 +566,95 @@ function getEnemyWorldPosition(enemy, target = _enemyWorldPosition) {
 }
 
 function createBat(y, id) {
-  const bat = createBatMesh();
-  const arcSpan = 1.05 + Math.random() * 0.25;
-  const arcCenter = getBulletLaneAngle();
-  const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
-  const enemy = {
-    type: 'bat',
-    id,
-    group: bat.group,
-    leftWing: bat.leftWing,
-    rightWing: bat.rightWing,
-    y,
-    angle,
-    arcCenter,
-    arcSpan,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: (0.55 + Math.random() * 0.75) * 0.6,
-    collisionRadius: 0.38,
-    flapOffset: Math.random() * twoPi,
-    twistB: twistBMode,
-  };
-  if (twistBMode) {
-    enemy.angle -= world.rotation.y;
-    enemy.arcCenter -= world.rotation.y;
-    positionEnemy(enemy);
-    world.add(enemy.group);
-  } else {
-    positionEnemy(enemy);
-    scene.add(enemy.group);
-  }
-  enemies.push(enemy);
+  enemySpawnSystem.createBat(y, id);
 }
 
 function createSpikedBall(y, id) {
-  const spike = createSpikedBallMesh();
-  const arcSpan = 0.9 + Math.random() * 0.25;
-  const arcCenter = getBulletLaneAngle();
-  const angle = arcCenter + (Math.random() - 0.5) * arcSpan * 0.6;
-  const enemy = {
-    type: 'spike',
-    id,
-    group: spike.group,
-    material: spike.material,
-    y,
-    angle,
-    arcCenter,
-    arcSpan,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.2 + Math.random() * 0.35,
-    collisionRadius: 0.43,
-    hp: 3,
-    flashTimer: 0,
-    twistB: twistBMode,
-  };
-  if (twistBMode) {
-    enemy.angle -= world.rotation.y;
-    enemy.arcCenter -= world.rotation.y;
-    positionEnemy(enemy);
-    world.add(enemy.group);
-  } else {
-    positionEnemy(enemy);
-    scene.add(enemy.group);
-  }
-  enemies.push(enemy);
-}
-
-function isWormAngleValid(platformData, angle) {
-  return platformData.tiles.some(tile => isWormTile(tile) && angleInArc((angle + twoPi) % twoPi, tile.start, tile.end));
-}
-
-function isWormBodySupported(platformData, angle, radius, segmentSpacing = 0.24) {
-  const angleSpacing = segmentSpacing / radius;
-  for (let i = -1; i <= 4; i += 1) {
-    const forwardAngle = angle + i * angleSpacing;
-    const backwardAngle = angle - i * angleSpacing;
-    if (!isWormAngleValid(platformData, forwardAngle)) return false;
-    if (!isWormAngleValid(platformData, backwardAngle)) return false;
-  }
-  return true;
-}
-
-function startGroundEnemyFall(enemy) {
-  if (enemy.falling) return;
-  enemy.falling = true;
-  enemy.fallVelocity = -0.2;
-  enemy.platformData = null;
-}
-
-function updateGroundEnemyFall(enemy, dt) {
-  const previousY = enemy.group.position.y;
-  enemy.fallVelocity = (enemy.fallVelocity ?? -0.2) - 14 * dt;
-  enemy.group.position.y += enemy.fallVelocity * dt;
-
-  for (const platform of platforms) {
-    const platformTop = platformY(platform) + platformThickness / 2;
-    const footBefore = previousY - groundEnemyFootOffset;
-    const footNow = enemy.group.position.y - groundEnemyFootOffset;
-    if (footBefore < platformTop || footNow > platformTop || enemy.fallVelocity >= 0) continue;
-
-    _enemyFallLocalPosition.copy(enemy.group.position);
-    _enemyFallLocalPosition.y = platformTop + groundEnemyFootOffset;
-    const tile = getTileAtWorldPoint(platform, _enemyFallLocalPosition);
-    if (!tile || !isWormTile(tile)) continue;
-
-    platform.group.worldToLocal(_enemyFallLocalPosition);
-    enemy.platformData = platform;
-    enemy.localAngle = (Math.atan2(_enemyFallLocalPosition.z, _enemyFallLocalPosition.x) + twoPi) % twoPi;
-    enemy.angle = enemy.localAngle;
-    enemy.orbitRadius = gameplayLaneRadius;
-    enemy.y = platformTop + groundEnemyFootOffset;
-    enemy.falling = false;
-    enemy.fallVelocity = 0;
-    positionEnemy(enemy);
-    return;
-  }
+  enemySpawnSystem.createSpikedBall(y, id);
 }
 
 function detachGroundEnemiesFromTile(platform, tile) {
-  for (const enemy of enemies) {
-    if (!isGroundEnemy(enemy) || enemy.falling || enemy.platformData !== platform) continue;
-    const angle = (enemy.localAngle + twoPi) % twoPi;
-    if (angleInArc(angle, tile.start, tile.end)) startGroundEnemyFall(enemy);
-  }
+  enemyUpdateSystem.detachGroundEnemiesFromTile(platform, tile);
 }
 
 function createWorm(platformData, id, tile) {
-  const worm = createWormMesh();
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'worm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.45 + Math.random() * 0.45,
-    segmentSpacing: 0.24,
-    collisionRadius: 0.34,
-    hp: 3,
-    flashTimer: 0,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createWorm(platformData, id, tile);
 }
 
 function createYellowWorm(platformData, id, tile) {
-  const worm = createWormMesh({ bodyMaterialTemplate: yellowWormMaterial, headMaterialTemplate: yellowWormHeadMaterial });
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'yellowWorm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.45 + Math.random() * 0.45,
-    segmentSpacing: 0.24,
-    collisionRadius: 0.34,
-    hp: 3,
-    flashTimer: 0,
-    splitOnDeath: true,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createYellowWorm(platformData, id, tile);
 }
 
 function createMiniYellowWorm(platformData, id, localAngle, direction) {
-  const worm = createWormMesh({ bodyMaterialTemplate: yellowWormMaterial, headMaterialTemplate: yellowWormHeadMaterial, scale: 0.5 });
-  const enemy = {
-    type: 'miniYellowWorm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle,
-    angle: localAngle,
-    direction,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.6,
-    segmentSpacing: 0.12,
-    collisionRadius: 0.17,
-    hp: 1,
-    flashTimer: 0,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createMiniYellowWorm(platformData, id, localAngle, direction);
 }
 
 function splitYellowWorm(enemy) {
-  if (!enemy.splitOnDeath || !enemy.platformData) return;
-  const baseId = enemy.id + 2000;
-  createMiniYellowWorm(enemy.platformData, baseId, enemy.localAngle - 0.08, -1);
-  createMiniYellowWorm(enemy.platformData, baseId + 1, enemy.localAngle + 0.08, 1);
+  enemyCombatSystem.splitYellowWorm(enemy);
 }
 
 function createPillarWorm(y, id) {
-  const worm = createWormMesh();
-  worm.group.scale.setScalar(0.84);
-  const laneAngle = ((getBulletLaneAngle() - world.rotation.y + 0.18) % twoPi + twoPi) % twoPi;
-  const enemy = {
-    type: 'pillarWorm',
-    id,
-    group: worm.group,
-    segments: worm.segments,
-    y,
-    localAngle: laneAngle,
-    angle: laneAngle,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    visualRadius: pillarRadius + 0.18,
-    segmentArc: 0.19,
-    speed: 0.28 + Math.random() * 0.22,
-    collisionRadius: 0.34,
-    hp: 3,
-    flashTimer: 0,
-    collisionPosition: new THREE.Vector3(),
-    interactable: false,
-  };
-  world.add(enemy.group);
-  positionEnemy(enemy);
-  enemies.push(enemy);
+  enemySpawnSystem.createPillarWorm(y, id);
 }
 
 function createFloatingEnemy(type, y, id) {
-  return createFloatingEnemyWithOptions(type, y, id);
+  return enemySpawnSystem.createFloatingEnemy(type, y, id);
 }
 
 function createFloatingEnemyWithOptions(type, y, id, options = {}) {
-  const isJellyfish = type === 'jellyfish';
-  const built = isJellyfish ? createJellyfishMesh() : createPufferBombMesh();
-  const arcSpan = 0.95 + Math.random() * 0.35;
-  const arcCenter = getBulletLaneAngle();
-  const angle = arcCenter + (Math.random() - 0.5) * arcSpan;
-  const useTwistB = options.twistB ?? (twistBMode && !options.small);
-  const enemy = {
-    type,
-    id,
-    group: built.group,
-    material: built.material,
-    y,
-    baseY: y,
-    angle: options.angle ?? angle,
-    arcCenter: options.arcCenter ?? arcCenter,
-    arcSpan: options.arcSpan ?? arcSpan,
-    direction: options.direction ?? (Math.random() < 0.5 ? 1 : -1),
-    orbitRadius: options.orbitRadius ?? gameplayLaneRadius,
-    speed: options.speed ?? (isJellyfish ? 0.28 + Math.random() * 0.28 : 0.18 + Math.random() * 0.2),
-    collisionRadius: options.collisionRadius ?? (isJellyfish ? 0.34 : 0.38),
-    hp: options.hp ?? (isJellyfish ? 2 : 2),
-    flashTimer: 0,
-    bobOffset: Math.random() * twoPi,
-    splitOnDeath: options.splitOnDeath ?? (isJellyfish && !options.small),
-    twistB: useTwistB,
-  };
-  if (options.small) enemy.group.scale.setScalar(0.62);
-  if (useTwistB) {
-    enemy.angle -= world.rotation.y;
-    enemy.arcCenter -= world.rotation.y;
-    positionEnemy(enemy);
-    world.add(enemy.group);
-  } else {
-    positionEnemy(enemy);
-    scene.add(enemy.group);
-  }
-  enemies.push(enemy);
+  return enemySpawnSystem.createFloatingEnemyWithOptions(type, y, id, options);
 }
 
 function splitJellyfish(enemy, position) {
-  if (!enemy.splitOnDeath) return;
-  const parentAngle = enemy.twistB ? enemy.angle + world.rotation.y : enemy.angle;
-  const parentArcCenter = enemy.twistB ? enemy.arcCenter + world.rotation.y : enemy.arcCenter;
-  for (let i = 0; i < 2; i += 1) {
-    createFloatingEnemyWithOptions('jellyfish', position.y + (i - 0.5) * 0.25, enemy.id + 1000 + i, {
-      small: true,
-      hp: 1,
-      collisionRadius: enemy.collisionRadius * 0.65,
-      orbitRadius: gameplayLaneRadius,
-      angle: parentAngle + (i - 0.5) * 0.35,
-      arcCenter: parentArcCenter,
-      arcSpan: enemy.arcSpan * 0.8,
-      speed: enemy.speed * 1.35,
-      direction: i === 0 ? -1 : 1,
-      twistB: enemy.twistB,
-    });
-  }
+  enemyCombatSystem.splitJellyfish(enemy, position);
 }
 
 function createExplosiveMushroom(platformData, id, tile) {
-  const built = createExplosiveMushroomMesh();
-  const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'explosiveMushroom',
-    id,
-    group: built.group,
-    materials: [built.stemMaterial, built.capMaterial, built.spotMaterial],
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.24,
-    angle,
-    localAngle: angle,
-    orbitRadius: gameplayLaneRadius,
-    collisionRadius: 0.36,
-    hp: 1,
-    flashTimer: 0,
-  };
-  enemy.group.position.set(
-    Math.cos(angle) * gameplayLaneRadius,
-    platformThickness / 2 + 0.24,
-    Math.sin(angle) * gameplayLaneRadius
-  );
-  enemy.group.rotation.y = -angle + Math.PI / 2;
-  platformData.group.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createExplosiveMushroom(platformData, id, tile);
 }
 
 function createTurtle(platformData, id, tile) {
-  const turtle = createTurtleMesh();
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'turtle',
-    id,
-    group: turtle.group,
-    materials: turtle.materials,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    speed: 0.32 + Math.random() * 0.28,
-    collisionRadius: 0.4,
-    hp: 3,
-    flashTimer: 0,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createTurtle(platformData, id, tile);
 }
 
 function createPorcupine(platformData, id, tile) {
-  const porcupine = createPorcupineMesh();
-  const start = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
-  const enemy = {
-    type: 'porcupine',
-    id,
-    group: porcupine.group,
-    material: porcupine.material,
-    spikeMaterial: porcupine.spikeMaterial,
-    spikes: porcupine.spikes,
-    platformData,
-    y: platformData.group.position.y + platformThickness / 2 + 0.2,
-    localAngle: start,
-    angle: start,
-    direction: Math.random() < 0.5 ? 1 : -1,
-    orbitRadius: gameplayLaneRadius,
-    baseSpeed: 0.28 + Math.random() * 0.24,
-    speed: 0.28 + Math.random() * 0.24,
-    collisionRadius: 0.38,
-    hp: 3,
-    flashTimer: 0,
-    state: 'walk',
-    stateTimer: 1.5 + Math.random() * 1.4,
-    spikesOut: false,
-  };
-  positionEnemy(enemy);
-  scene.add(enemy.group);
-  enemies.push(enemy);
+  enemySpawnSystem.createPorcupine(platformData, id, tile);
 }
 
 function createSawBlade(y, angle, speedOffset = 0) {
-  const mesh = new THREE.Mesh(sawBladeGeometry, sawBladeMaterial.clone());
-  mesh.castShadow = true;
-  const sawBlade = {
-    group: mesh,
-    y,
-    angle,
-    speed: 1.55 + currentLevel * 0.08 + speedOffset,
-    collisionRadius: sawBladeOuterRadius,
-  };
-  positionSawBlade(sawBlade);
-  world.add(mesh);
-  sawBlades.push(sawBlade);
+  obstacleSystem.createSawBlade(y, angle, speedOffset);
 }
 
 function positionSawBlade(sawBlade) {
-  sawBlade.group.position.set(
-    Math.cos(sawBlade.angle) * sawBladeLaneRadius,
-    sawBlade.y,
-    Math.sin(sawBlade.angle) * sawBladeLaneRadius
-  );
-  sawBlade.group.rotation.y = -sawBlade.angle;
+  obstacleSystem.positionSawBlade(sawBlade);
 }
 
 function spawnSawBladesForLevel() {
-  const target = getLevelTarget();
-  const spacing = (target * platformSpacing) / sawBladesPerLevel;
-  for (let i = 0; i < sawBladesPerLevel; i += 1) {
-    const y = -platformSpacing * 0.75 - i * spacing - Math.random() * platformSpacing * 0.45;
-    const angle = (i / sawBladesPerLevel) * twoPi + Math.random() * 0.35;
-    createSawBlade(y, angle, Math.random() * 0.35);
-  }
+  obstacleSystem.spawnSawBladesForLevel(sawBladesPerLevel);
 }
 
 function createPillarLaserRing(y) {
-  const mesh = new THREE.Mesh(pillarLaserRingGeometry, pillarLaserRingMaterial.clone());
-  mesh.position.y = y;
-  mesh.rotation.x = Math.PI / 2;
-  mesh.renderOrder = 3;
-  world.add(mesh);
-  pillarLaserRings.push({ mesh, y, timer: Math.random() * (laserRingOnTime + laserRingOffTime) });
+  obstacleSystem.createPillarLaserRing(y);
 }
 
 function spawnPillarLaserRingsForLevel() {
-  const target = getLevelTarget();
-  const count = Math.min(5, Math.max(1, Math.floor(currentLevel / 2)));
-  const used = new Set();
-  while (used.size < count) used.add(2 + Math.floor(Math.random() * Math.max(1, target - 3)));
-  for (const interval of used) {
-    const y = -(interval + 0.5) * platformSpacing;
-    createPillarLaserRing(y);
-    const floaterY = y + goldBlockSize;
-    const angleStep = Math.PI / 7.2;
-    for (let j = 0; j < 3; j++) {
-      const angle = j * angleStep;
-      createFloater(floaterY, angle);
-    }
-  }
+  obstacleSystem.spawnPillarLaserRingsForLevel();
 }
 
 function maybeSpawnWorms(platformData, id) {
-  if (id < 6 || platformData.final) return;
-  const validTiles = platformData.tiles.filter(isWormTile);
-  if (validTiles.length === 0) return;
-
-  const difficulty = Math.min(id / 24, 1);
-  const maxWorms = Math.min(3, validTiles.length);
-  const wormCount = Math.min(maxWorms, Math.floor(Math.random() * 4));
-  const shuffled = [...validTiles].sort(() => Math.random() - 0.5);
-  for (let i = 0; i < wormCount; i += 1) {
-    if (Math.random() >= 0.35 + difficulty * 0.35) continue;
-    if (groundWormsSinceTurtle >= 3) {
-      createTurtle(platformData, id, shuffled[i]);
-      groundWormsSinceTurtle = 0;
-    } else {
-      if (Math.random() < 0.22) {
-        createYellowWorm(platformData, id, shuffled[i]);
-      } else {
-        createWorm(platformData, id, shuffled[i]);
-      }
-      groundWormsSinceTurtle += 1;
-    }
-  }
+  enemySpawnSystem.maybeSpawnWorms(platformData, id);
 }
 
 function ensureInitialLowerPlatformYellowWorm() {
-  const platform = platforms.find(candidate => candidate.id === 1 && !candidate.final);
-  if (!platform) return;
-  const tile = platform.tiles.find(isWormTile);
-  if (!tile) return;
-  createYellowWorm(platform, platform.id * 1000 + 1, tile);
+  enemySpawnSystem.ensureInitialLowerPlatformYellowWorm();
 }
 
 function ensureInitialLowerPlatformMushroom() {
-  const platform = platforms.find(candidate => candidate.id === 1 && !candidate.final);
-  if (!platform) return;
-  const validTiles = platform.tiles.filter(isWormTile);
-  if (validTiles.length === 0) return;
-  const tile = validTiles[Math.min(1, validTiles.length - 1)];
-  createExplosiveMushroom(platform, platform.id * 1000 + 2, tile);
+  enemySpawnSystem.ensureInitialLowerPlatformMushroom();
 }
 
 function maybeSpawnEnemiesForSection(platformData, id) {
-  if (id < 5) return;
-
-  const difficulty = Math.min(id / 24, 1);
-  const platformYValue = platformData.group.position.y;
-  const sectionY = platformYValue + platformSpacing * (0.38 + Math.random() * 0.22);
-  const batChance = Math.min(0.08 + difficulty * 0.38, 0.55);
-  const spikeChance = id > 10 ? Math.min((difficulty - 0.35) * 0.28, 0.22) : 0;
-
-  for (let i = 0; i < 2; i += 1) {
-    if (Math.random() < batChance) {
-      const offset = (i - 0.5) * 0.9 + (Math.random() - 0.5) * 0.35;
-      createBat(sectionY + offset, id);
-    }
-  }
-
-  if (Math.random() < spikeChance) {
-    createSpikedBall(sectionY - 0.9 + Math.random() * 1.8, id);
-  }
-
-  maybeSpawnWorms(platformData, id);
-
-  if (id > 6 && Math.random() < 0.08 + difficulty * 0.12) {
-    const mushroomTiles = platformData.tiles.filter(isWormTile);
-    if (mushroomTiles.length > 0) createExplosiveMushroom(platformData, id, mushroomTiles[Math.floor(Math.random() * mushroomTiles.length)]);
-  }
-
-  if (id > 7 && Math.random() < 0.1 + difficulty * 0.14) {
-    createFloatingEnemy('jellyfish', sectionY + (Math.random() - 0.5) * 1.2, id);
-  }
-
-  if (id > 12 && Math.random() < 0.07 + difficulty * 0.1) {
-    createFloatingEnemy('pufferBomb', sectionY + (Math.random() - 0.5) * 1.2, id);
-  }
-
-if (id > 9 && platformData.tiles.length > 0 && Math.random() < 0.1 + difficulty * 0.12) {
-    const porcupineTiles = platformData.tiles.filter(isWormTile);
-    if (porcupineTiles.length > 0) createPorcupine(platformData, id, porcupineTiles[Math.floor(Math.random() * porcupineTiles.length)]);
-  }
-
-  if (acidSnailsThisLevel < 2 && id >= 3 && !platformData.final && platformData.tiles.length > 0) {
-    const snailTiles = platformData.tiles.filter(isWormTile);
-    if (snailTiles.length > 0) {
-      createAcidSnail(platformData, id, snailTiles[Math.floor(Math.random() * snailTiles.length)]);
-      acidSnailsThisLevel += 1;
-    }
-  }
-
-  if (id > 8 && Math.random() < 0.18 + difficulty * 0.12) {
-    createPillarWorm(sectionY - 0.45 + Math.random() * 0.9, id);
-  }
+  enemySpawnSystem.maybeSpawnEnemiesForSection(platformData, id);
 }
 
 function rebuildAmmoUI() {
@@ -2043,12 +964,7 @@ function updateBullets(dt) {
 }
 
 function disposeEnemy(enemy) {
-  const materials = new Set();
-  enemy.group.traverse((child) => {
-    if (child.material) materials.add(child.material);
-  });
-  if (enemy.group.parent) enemy.group.parent.remove(enemy.group);
-  materials.forEach((material) => material.dispose());
+  enemyCombatSystem.disposeEnemy(enemy);
 }
 
 function spawnExplosion(position, color, count = 12) {
@@ -2058,6 +974,174 @@ function spawnExplosion(position, color, count = 12) {
 function spawnBulletImpact(position) {
   spawnBulletImpactParticles({ scene, particles, particleGeometry, position, color: colors.bullet });
 }
+
+const platformSystem = createPlatformSystem({
+  world,
+  platforms,
+  spikeTraps,
+  spikeHoleGeometry,
+  spikeHoleMaterial,
+  platformSpikeGeometry,
+  platformSpikeMaterial,
+  getLevelTarget,
+  getSpikePlatformsThisLevel: () => spikePlatformsThisLevel,
+  setSpikePlatformsThisLevel: value => { spikePlatformsThisLevel = value; },
+  getShopTilePlat: () => shopTilePlat,
+  setShopTilePlat: value => { shopTilePlat = value; },
+  setShopTileRef: value => { shopTileRef = value; },
+  createCrate,
+  maybeSpawnEnemiesForSection,
+  maybeSpawnCannon,
+});
+
+const enemySpawnSystem = createEnemySpawnSystem({
+  scene,
+  world,
+  enemies,
+  platforms,
+  meshFactory: enemyMeshes,
+  yellowWormMaterial,
+  yellowWormHeadMaterial,
+  gameplayLaneRadius,
+  pillarRadius,
+  platformThickness,
+  platformSpacing,
+  twoPi,
+  getBulletLaneAngle,
+  getTwistBMode: () => twistBMode,
+  getGroundWormsSinceTurtle: () => groundWormsSinceTurtle,
+  setGroundWormsSinceTurtle: value => { groundWormsSinceTurtle = value; },
+  getAcidSnailsThisLevel: () => acidSnailsThisLevel,
+  setAcidSnailsThisLevel: value => { acidSnailsThisLevel = value; },
+  positionEnemy,
+});
+
+const enemyUpdateSystem = createEnemyUpdateSystem({
+  world,
+  ball,
+  enemies,
+  platforms,
+  acidSnailCrackedShellMaterial,
+  gameplayLaneRadius,
+  platformThickness,
+  groundEnemyFootOffset,
+  twoPi,
+  getScaledTime: () => scaledTime,
+  getFlyingModeB: () => flyingModeB,
+  getBallVelocity: () => ballVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  getStompImpulse: () => stompImpulse,
+  setAcidStompImmunity: value => { acidStompImmunity = value; },
+  getBallEnemyContact,
+  applyDamage,
+  killEnemyAt,
+  reloadAmmo,
+  spawnFloatingText,
+  playReloadSound,
+  spawnAcidPuddle,
+  disposeEnemy,
+});
+
+const enemyCombatSystem = createEnemyCombatSystem({
+  ball,
+  enemies,
+  getScore: () => score,
+  setScore: value => { score = value; },
+  getCombo: () => combo,
+  getHp: () => hp,
+  setHp: value => { hp = value; },
+  maxHp,
+  getVampiricLifeUnlocked: () => vampiricLifeUnlocked,
+  getVampiricKillCount: () => vampiricKillCount,
+  setVampiricKillCount: value => { vampiricKillCount = value; },
+  scoreEl,
+  heartsEl,
+  updateHeartsUI,
+  getEnemyWorldPosition,
+  getWorldRotation: () => world.rotation.y,
+  createMiniYellowWorm,
+  createFloatingEnemyWithOptions,
+  damageEnemy,
+  killEnemyAt,
+  removeEnemyAt,
+  spawnExplosion,
+  spawnBulletImpact,
+  spawnBounceCubes,
+  spawnFloatingText,
+  explodePuffer,
+  increaseCombo,
+  playBatDeathSound,
+  playMetallicBlipSound,
+});
+
+const obstacleSystem = createObstacleSystem({
+  world,
+  ball,
+  cannons,
+  platforms,
+  pillarSpikes,
+  floaters,
+  sawBlades,
+  pillarLaserRings,
+  spikeTraps,
+  assets: {
+    floaterDiscGeometry,
+    floaterMaterial,
+    pillarSpikeGeometry,
+    pillarSpikeMaterial,
+    sawBladeGeometry,
+    sawBladeMaterial,
+    pillarLaserRingGeometry,
+    pillarLaserRingMaterial,
+    cannonBaseGeometry,
+    cannonMouthGeometry,
+    cannonRingGeometry,
+    cannonLaserGeometry,
+    cannonMaterial,
+    cannonWarningMaterial,
+    laserMaterial,
+  },
+  constants: {
+    ballRadius,
+    gameplayLaneRadius,
+    goldBlockSize,
+    ledgeRadialLength,
+    pillarRadius,
+    platformOuterRadius,
+    platformSpacing,
+    platformSpikeHeight,
+    platformThickness,
+    sawBladeLaneRadius,
+    sawBladeOuterRadius,
+    spikeCycleDuration,
+    spikeDownDuration,
+    spikeMoveDuration,
+    spikeUpDuration,
+    twoPi,
+  },
+  getLevelTarget,
+  getCurrentLevel: () => currentLevel,
+  getBulletLaneAngle,
+  getWorldRotation: () => world.rotation.y,
+  getBallVelocity: () => ballVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  getStompImpulse: () => stompImpulse,
+  getCannonChargeTime: () => cannonChargeTime,
+  getCannonCooldown: () => cannonCooldown,
+  getLaserRingOnTime: () => laserRingOnTime,
+  getLaserRingOffTime: () => laserRingOffTime,
+  getPlayerHitboxRadius,
+  getBallColliderPositions,
+  reloadAmmo,
+  spawnExplosion,
+  spawnBulletImpact,
+  spawnFloatingText,
+  playReloadSound,
+  playBounceSound,
+  playCannonActivateSound,
+  playCannonFireSound,
+  applyDamage,
+});
 
 const coinPickupSystem = createCoinPickupSystem({
   camera,
@@ -2231,35 +1315,6 @@ function clearCoinPickups() {
   coinPickupSystem.clearCoinPickups();
 }
 
-function disposeTile(tile) {
-  if (tile.mesh.parent) tile.mesh.parent.remove(tile.mesh);
-  tile.mesh.geometry.dispose();
-  tile.material.dispose();
-
-  if (tile.crackLine) {
-    if (tile.crackLine.parent) tile.crackLine.parent.remove(tile.crackLine);
-    tile.crackLine.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
-    if (tile.crackLine.geometry) tile.crackLine.geometry.dispose();
-    if (tile.crackLine.material) tile.crackLine.material.dispose();
-  }
-}
-
-function setGrayTileCrackStage(platform, tile, stage) {
-  if (tile.crackLine) {
-    if (tile.crackLine.parent) tile.crackLine.parent.remove(tile.crackLine);
-    tile.crackLine.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
-  }
-
-  tile.crackLine = makeGrayCrackLines(tile.start, tile.end, stage);
-  platform.group.add(tile.crackLine);
-}
-
 function breakGrayTile(platform, tile) {
   if (tile.broken) return;
 
@@ -2318,79 +1373,15 @@ function breakCrackedTile(platform, tile) {
 }
 
 function removeEnemyAt(index, explosionColor) {
-  const enemy = enemies[index];
-  const position = new THREE.Vector3();
-  if (enemy.type === 'pillarWorm' && enemy.collisionPosition) {
-    position.copy(enemy.collisionPosition);
-  } else {
-    enemy.group.getWorldPosition(position);
-  }
-  disposeEnemy(enemy);
-  enemies.splice(index, 1);
-  spawnExplosion(position, explosionColor, enemy.type === 'bat' ? 12 : 18);
-  if (enemy.type === 'jellyfish') splitJellyfish(enemy, position);
-  if (enemy.type === 'yellowWorm') splitYellowWorm(enemy);
-  if (enemy.type === 'pufferBomb' || enemy.type === 'explosiveMushroom') explodePuffer(position);
-  spawnBounceCubes(position);
+  enemyCombatSystem.removeEnemyAt(index, explosionColor);
 }
 
 function killEnemyAt(index, explosionColor) {
-  const enemy = enemies[index];
-  if (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'acidSnail' || enemy.type === 'jellyfish' || enemy.type === 'porcupine' || enemy.type === 'explosiveMushroom') playBatDeathSound();
-  score += 5 * Math.max(1, combo);
-  scoreEl.textContent = String(score);
-  removeEnemyAt(index, explosionColor);
-  increaseCombo();
-  if (vampiricLifeUnlocked) {
-    vampiricKillCount += 1;
-    if (vampiricKillCount >= 10) {
-      vampiricKillCount = 0;
-      if (hp < maxHp) {
-        hp += 1;
-        updateHeartsUI(heartsEl, hp, maxHp);
-        spawnFloatingText('VAMP +1', ball.position, 0xe91e63, true);
-      }
-    }
-  }
+  enemyCombatSystem.killEnemyAt(index, explosionColor);
 }
 
 function damageEnemy(enemyIndex) {
-  const enemy = enemies[enemyIndex];
-  if (enemy.type === 'acidSnail') return;
-  if (enemy.type === 'explosiveMushroom') {
-    killEnemyAt(enemyIndex, colors.particle);
-    return;
-  }
-  if (enemy.type === 'bat') {
-    killEnemyAt(enemyIndex, colors.particle);
-    return;
-  }
-
-  enemy.hp -= 1;
-  enemy.flashTimer = 0.18;
-  if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm') {
-    for (const segment of enemy.segments) {
-      segment.material.emissive.setHex(0xffeb3b);
-      segment.material.emissiveIntensity = 0.8;
-    }
-  } else if (enemy.type === 'turtle') {
-    for (const material of enemy.materials) {
-      material.emissive.setHex(0xffeb3b);
-      material.emissiveIntensity = 0.8;
-    }
-  } else if (enemy.type === 'porcupine') {
-    enemy.material.emissive.setHex(0xffeb3b);
-    enemy.material.emissiveIntensity = 0.8;
-    enemy.spikeMaterial.emissive.setHex(0xffeb3b);
-    enemy.spikeMaterial.emissiveIntensity = 0.8;
-  } else {
-    enemy.material.emissive.setHex(0xff0000);
-    enemy.material.emissiveIntensity = 0.9;
-  }
-
-  if (enemy.hp <= 0) {
-    killEnemyAt(enemyIndex, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' ? colors.yellowWorm : colors.red);
-  }
+  enemyCombatSystem.damageEnemy(enemyIndex);
 }
 
 function explodePuffer(position) {
@@ -2517,31 +1508,7 @@ function checkBallGoldBlockStomp(previousY) {
 }
 
 function checkBulletEnemyHit(bullet) {
-  for (let i = enemies.length - 1; i >= 0; i -= 1) {
-    const enemy = enemies[i];
-    if (bullet.hitEnemies?.has(enemy)) continue;
-    const hitRadius = enemy.collisionRadius + 0.12;
-    if (enemy.type === 'pillarWorm' && !enemy.interactable) continue;
-    const collisionPosition = getEnemyWorldPosition(enemy);
-    if (bullet.mesh.position.distanceToSquared(collisionPosition) <= hitRadius * hitRadius) {
-      if (bullet.shotgunShotId && enemy.lastShotgunHitId === bullet.shotgunShotId) return false;
-      if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
-      if (bullet.hitEnemies) bullet.hitEnemies.add(enemy);
-      if (enemy.type === 'acidSnail') {
-        spawnBulletImpact(bullet.mesh.position.clone());
-        enemy.flashTimer = 0.2;
-        enemy.bodyMaterial.emissive.setHex(0x2196f3);
-        enemy.bodyMaterial.emissiveIntensity = 0.9;
-        enemy.shellMaterial.emissive.setHex(0x2196f3);
-        enemy.shellMaterial.emissiveIntensity = 0.9;
-        playMetallicBlipSound();
-        return true;
-      }
-      damageEnemy(i);
-      return true;
-    }
-  }
-  return false;
+  return enemyCombatSystem.checkBulletEnemyHit(bullet);
 }
 
 function destroyGoldBlock(index, position) {
@@ -2570,408 +1537,63 @@ function updateFallingCratesAndGold(dt) {
 }
 
 function getCannonWorldPosition(cannon) {
-  _cannonWorldPosition.set(0, 0.25, 0);
-  cannon.group.localToWorld(_cannonWorldPosition);
-  return _cannonWorldPosition;
+  return obstacleSystem.getCannonWorldPosition(cannon);
 }
 
 function destroyCannon(index) {
-  const cannon = cannons[index];
-  const position = getCannonWorldPosition(cannon).clone();
-  if (cannon.group.parent) cannon.group.parent.remove(cannon.group);
-  cannon.group.traverse((child) => {
-    if (child.geometry) child.geometry.dispose();
-    if (child.material) child.material.dispose();
-  });
-  cannons.splice(index, 1);
-  spawnExplosion(position, 0xff7043, 18);
+  obstacleSystem.destroyCannon(index);
 }
 
 function damageCannon(index) {
-  const cannon = cannons[index];
-  cannon.hp -= 1;
-  cannon.flashTimer = 0.18;
-  spawnBulletImpact(getCannonWorldPosition(cannon));
-  if (cannon.hp <= 0) destroyCannon(index);
+  obstacleSystem.damageCannon(index);
 }
 
 function checkBulletCannonHit(bullet) {
-  for (let i = cannons.length - 1; i >= 0; i -= 1) {
-    const cannon = cannons[i];
-    const position = getCannonWorldPosition(cannon);
-    if (bullet.mesh.position.distanceToSquared(position) <= 0.34 * 0.34) {
-      if (bullet.shotgunShotId && cannon.lastShotgunHitId === bullet.shotgunShotId) return false;
-      if (bullet.shotgunShotId) cannon.lastShotgunHitId = bullet.shotgunShotId;
-      damageCannon(i);
-      return true;
-    }
-  }
-  return false;
+  return obstacleSystem.checkBulletCannonHit(bullet);
 }
 
 function getBallCannonContact(cannon) {
-  const colliders = getBallColliderPositions();
-  const position = getCannonWorldPosition(cannon);
-  const hitRadius = getPlayerHitboxRadius() + 0.22;
-  const hitRadiusSq = hitRadius * hitRadius;
-  const sideHitRadius = getPlayerHitboxRadius() * 0.55 + 0.22;
-  const sideHitRadiusSq = sideHitRadius * sideHitRadius;
-  if (colliders.bottom.distanceToSquared(position) <= hitRadiusSq) return 'bottom';
-  if (colliders.top.distanceToSquared(position) <= hitRadiusSq) return 'top';
-  if (colliders.left.distanceToSquared(position) <= sideHitRadiusSq) return 'left';
-  if (colliders.right.distanceToSquared(position) <= sideHitRadiusSq) return 'right';
-  return null;
+  return obstacleSystem.getBallCannonContact(cannon);
 }
 
 function isSolidLineOfSightTile(tile) {
-  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'red' || tile.type === 'crackedBlue' || tile.type === 'gray');
+  return obstacleSystem.isSolidLineOfSightTile(tile);
 }
 
 function getAngularDistance(a, b) {
-  let dist = Math.abs(a - b);
-  if (dist > Math.PI) dist = twoPi - dist;
-  return dist;
+  return obstacleSystem.getAngularDistance(a, b);
 }
 
 function getCannonWorldMouth(cannon) {
-  _cannonMouthWorldPosition.set(0, 0.56, 0);
-  cannon.group.localToWorld(_cannonMouthWorldPosition);
-  return _cannonMouthWorldPosition;
+  return obstacleSystem.getCannonWorldMouth(cannon);
 }
 
 function cannonHasLineOfSight(cannon) {
-  const mouth = getCannonWorldMouth(cannon);
-  if (mouth.y >= ball.position.y - ballRadius) return false;
-
-  const cannonAngle = Math.atan2(mouth.z, mouth.x);
-  const ballAngle = Math.atan2(ball.position.z, ball.position.x);
-  if (getAngularDistance(cannonAngle, ballAngle) > 0.18) return false;
-
-  for (const platform of platforms) {
-    if (platform === cannon.platformData) continue;
-    const y = platformY(platform);
-    if (y <= mouth.y + platformThickness || y >= ball.position.y - ballRadius) continue;
-    _cannonLosPoint.set(ball.position.x, y, ball.position.z);
-    const tile = getTileAtWorldPoint(platform, _cannonLosPoint);
-    if (isSolidLineOfSightTile(tile)) return false;
-  }
-  return true;
+  return obstacleSystem.cannonHasLineOfSight(cannon);
 }
 
 function updateCannons(dt) {
-  for (let i = cannons.length - 1; i >= 0; i -= 1) {
-    const cannon = cannons[i];
-    const contact = getBallCannonContact(cannon);
-    if (contact === 'bottom' && ballVelocity < 0 && ball.position.y > getCannonWorldPosition(cannon).y) {
-      destroyCannon(i);
-      if (reloadAmmo()) {
-        spawnFloatingText('Reload', ball.position);
-        playReloadSound();
-      }
-      ballVelocity = Math.max(ballVelocity, stompImpulse);
-      continue;
-    }
-    if (contact) {
-      applyDamage();
-    }
-
-    const hasLos = cannonHasLineOfSight(cannon);
-
-    cannon.base.material.emissive?.setHex(0x000000);
-    cannon.base.material.emissiveIntensity = 0;
-    cannon.ring.visible = false;
-    cannon.laser.visible = false;
-
-    if (cannon.flashTimer > 0) {
-      cannon.flashTimer = Math.max(0, cannon.flashTimer - dt);
-      cannon.base.material.emissive?.setHex(0xff9800);
-      cannon.base.material.emissiveIntensity = 0.8;
-    }
-
-    if (cannon.cooldown > 0) {
-      cannon.cooldown = Math.max(0, cannon.cooldown - dt);
-      cannon.charge = 0;
-      continue;
-    }
-
-    if (cannon.laserTimer > 0) {
-      cannon.laserTimer = Math.max(0, cannon.laserTimer - dt);
-      cannon.laser.visible = true;
-      if (!cannon.damagedThisShot && Math.hypot(ball.position.x - getCannonWorldMouth(cannon).x, ball.position.z - getCannonWorldMouth(cannon).z) <= getPlayerHitboxRadius() + 0.15 && ball.position.y > _cannonMouthWorldPosition.y) {
-        applyDamage();
-        cannon.damagedThisShot = true;
-      }
-      if (cannon.laserTimer <= 0) {
-        cannon.cooldown = cannonCooldown;
-      }
-      continue;
-    }
-
-    if (!hasLos) {
-      cannon.charge = 0;
-      continue;
-    }
-
-    if (cannon.charge === 0) {
-      playCannonActivateSound();
-    }
-    cannon.charge += dt;
-    const chargeProgress = Math.min(1, cannon.charge / cannonChargeTime);
-    cannon.base.material.emissive?.setHex(0xff0000);
-    cannon.base.material.emissiveIntensity = 0.35 + Math.sin(performance.now() * 0.02) * 0.25;
-    cannon.ring.visible = true;
-    cannon.ring.scale.setScalar(Math.max(0.25, 1 - chargeProgress * 0.75));
-
-    if (cannon.charge >= cannonChargeTime) {
-      cannon.charge = 0;
-      cannon.laserTimer = 0.3;
-      cannon.damagedThisShot = false;
-      cannon.ring.visible = false;
-      cannon.laser.visible = true;
-      playCannonFireSound();
-    }
-  }
+  obstacleSystem.updateCannons(dt);
 }
 
 function updateEnemies(dt) {
-  for (let i = enemies.length - 1; i >= 0; i -= 1) {
-    const enemy = enemies[i];
-    if (enemy.type === 'pillarWorm') {
-      enemy.localAngle += enemy.speed * enemy.direction * dt;
-      enemy.angle = enemy.localAngle;
-    } else if (isGroundEnemy(enemy)) {
-      if (enemy.falling) {
-        updateGroundEnemyFall(enemy, dt);
-      } else if (enemy.type === 'porcupine') {
-        enemy.stateTimer -= dt;
-        if (enemy.state === 'walk' && enemy.stateTimer <= 0) {
-          enemy.state = 'spikes';
-          enemy.stateTimer = 2;
-          enemy.speed = 0;
-          enemy.spikesOut = true;
-          for (const spike of enemy.spikes) spike.visible = true;
-        } else if (enemy.state === 'spikes' && enemy.stateTimer <= 0) {
-          enemy.state = 'walk';
-          enemy.stateTimer = 1.5 + Math.random() * 1.4;
-          enemy.speed = enemy.baseSpeed;
-          enemy.spikesOut = false;
-          for (const spike of enemy.spikes) spike.visible = false;
-        }
-      }
-      if (!enemy.falling) {
-        const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
-        if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius, enemy.segmentSpacing)) {
-          enemy.localAngle = (nextAngle + twoPi) % twoPi;
-        } else if (isWormBodySupported(enemy.platformData, enemy.localAngle, enemy.orbitRadius, enemy.segmentSpacing)) {
-          enemy.direction *= -1;
-        } else {
-          startGroundEnemyFall(enemy);
-        }
-        enemy.angle = enemy.localAngle;
-        if (enemy.type === 'acidSnail' && !enemy.falling) {
-          enemy.trailTimer += dt;
-          if (enemy.trailTimer >= 0.25) {
-            enemy.trailTimer = 0;
-            spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, false);
-          }
-        }
-      }
-    } else if (enemy.type === 'explosiveMushroom') {
-      // Fixed ground hazard: it only reacts to stomps and bullets.
-    } else if (enemy.twistB || flyingModeB) {
-      enemy.angle = (enemy.angle + enemy.speed * enemy.direction * dt + twoPi) % twoPi;
-    } else {
-      const arcMin = enemy.arcCenter - enemy.arcSpan / 2;
-      const arcMax = enemy.arcCenter + enemy.arcSpan / 2;
-      enemy.angle += enemy.speed * enemy.direction * dt;
-      if (enemy.angle >= arcMax) {
-        enemy.angle = arcMax;
-        enemy.direction = -1;
-      } else if (enemy.angle <= arcMin) {
-        enemy.angle = arcMin;
-        enemy.direction = 1;
-      }
-    }
-    if (!enemy.falling) positionEnemy(enemy);
-
-    if (enemy.type === 'jellyfish' || enemy.type === 'pufferBomb') {
-      enemy.y = enemy.baseY + Math.sin(scaledTime * 2 + enemy.bobOffset) * 0.18;
-      if (enemy.type === 'pufferBomb') enemy.group.scale.setScalar(1 + Math.sin(scaledTime * 4 + enemy.bobOffset) * 0.08);
-    }
-
-    if (enemy.type === 'bat') {
-      const flap = Math.sin(scaledTime * 18 + enemy.flapOffset) * 0.55;
-      enemy.leftWing.rotation.z = -0.28 - flap;
-      enemy.rightWing.rotation.z = 0.28 + flap;
-    } else if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm') {
-      const wiggle = Math.sin(performance.now() * 0.012 + enemy.id) * 0.05;
-      enemy.group.rotation.z = wiggle;
-      if (enemy.flashTimer > 0) {
-        enemy.flashTimer -= dt;
-      } else {
-        for (const segment of enemy.segments) segment.material.emissiveIntensity = 0;
-      }
-    } else if (enemy.type === 'turtle') {
-      const wiggle = Math.sin(performance.now() * 0.01 + enemy.id) * 0.035;
-      enemy.group.rotation.z = wiggle;
-      if (enemy.flashTimer > 0) {
-        enemy.flashTimer -= dt;
-      } else {
-        for (const material of enemy.materials) material.emissiveIntensity = material === enemy.materials[1] ? 0.18 : 0;
-      }
-    } else if (enemy.type === 'porcupine') {
-      if (enemy.flashTimer > 0) {
-        enemy.flashTimer -= dt;
-      } else {
-        enemy.material.emissiveIntensity = 0;
-        enemy.spikeMaterial.emissiveIntensity = 0;
-      }
-    } else if (enemy.type === 'acidSnail') {
-      if (enemy.flashTimer > 0) {
-        enemy.flashTimer -= dt;
-      } else {
-        enemy.bodyMaterial.emissiveIntensity = 0;
-        enemy.shellMaterial.emissiveIntensity = 0;
-      }
-    } else if (enemy.type === 'explosiveMushroom') {
-      enemy.group.scale.setScalar(1 + Math.sin(scaledTime * 3 + enemy.id) * 0.025);
-    } else {
-      enemy.group.rotation.x += dt * 1.1;
-      enemy.group.rotation.z += dt * 0.8;
-      if (enemy.flashTimer > 0) {
-        enemy.flashTimer -= dt;
-      } else {
-        enemy.material.emissiveIntensity = 0;
-      }
-    }
-
-    const contact = getBallEnemyContact(enemy);
-    if (contact === 'bottom' && (enemy.type === 'bat' || enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm' || enemy.type === 'turtle' || enemy.type === 'jellyfish' || enemy.type === 'pufferBomb' || enemy.type === 'porcupine' || enemy.type === 'acidSnail' || enemy.type === 'explosiveMushroom') && ballVelocity < 0 && ball.position.y > getEnemyWorldPosition(enemy).y) {
-      if (enemy.type === 'turtle') applyDamage();
-      if (enemy.type === 'porcupine' && enemy.spikesOut) {
-        applyDamage();
-        ballVelocity = Math.max(ballVelocity, stompImpulse * 0.55);
-        continue;
-      }
-      if (enemy.type === 'acidSnail') {
-        acidStompImmunity = 0.6;
-        enemy.flashTimer = 0.25;
-        enemy.bodyMaterial.emissive.setHex(0xff0000);
-        enemy.bodyMaterial.emissiveIntensity = 0.9;
-        enemy.shellMaterial.emissive.setHex(0xff0000);
-        enemy.shellMaterial.emissiveIntensity = 0.9;
-        if (enemy.shellIntact) {
-          enemy.shellIntact = false;
-          enemy.shell.material = acidSnailCrackedShellMaterial.clone();
-          spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, true);
-          if (reloadAmmo()) {
-            spawnFloatingText('Reload', ball.position);
-            playReloadSound();
-          }
-          ballVelocity = Math.max(ballVelocity, stompImpulse * 0.7);
-          continue;
-        } else {
-          spawnAcidPuddle(enemy.platformData, enemy.localAngle, enemy.orbitRadius, true);
-          killEnemyAt(i, colors.acid);
-          if (reloadAmmo()) {
-            spawnFloatingText('Reload', ball.position);
-            playReloadSound();
-          }
-          ballVelocity = Math.max(ballVelocity, stompImpulse);
-          continue;
-        }
-      }
-      killEnemyAt(i, enemy.type === 'worm' || enemy.type === 'pillarWorm' ? colors.worm : enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' ? colors.yellowWorm : enemy.type === 'turtle' ? colors.red : colors.particle);
-      if (reloadAmmo()) {
-        spawnFloatingText('Reload', ball.position);
-        playReloadSound();
-      }
-      ballVelocity = Math.max(ballVelocity, stompImpulse);
-      continue;
-    }
-
-    if (contact) {
-      applyDamage();
-      return;
-    }
-
-    if (enemy.y > ball.position.y + 15) {
-      disposeEnemy(enemy);
-      enemies.splice(i, 1);
-    }
-  }
+  enemyUpdateSystem.updateEnemies(dt);
 }
 
 function getSpikeRaiseAmount(timer) {
-  const cycleTime = timer % spikeCycleDuration;
-  const moveDownStart = spikeUpDuration;
-  const downStart = moveDownStart + spikeMoveDuration;
-  const moveUpStart = downStart + spikeDownDuration;
-
-  if (cycleTime < moveDownStart) return 1;
-  if (cycleTime < downStart) return 1 - (cycleTime - moveDownStart) / spikeMoveDuration;
-  if (cycleTime < moveUpStart) return 0;
-  return (cycleTime - moveUpStart) / spikeMoveDuration;
+  return obstacleSystem.getSpikeRaiseAmount(timer);
 }
 
 function updateSpikeTraps(dt) {
-  const upY = platformThickness / 2 + platformSpikeHeight / 2 - 0.02;
-  const downY = platformThickness / 2 - platformSpikeHeight / 2 - 0.16;
-  const damageRadius = getPlayerHitboxRadius() + 0.16;
-  const damageRadiusSq = damageRadius * damageRadius;
-
-  for (const trap of spikeTraps) {
-    trap.timer = (trap.timer + dt) % spikeCycleDuration;
-    trap.raiseAmount = getSpikeRaiseAmount(trap.timer);
-
-    for (const spike of trap.spikes) {
-      spike.mesh.position.y = downY + (upY - downY) * trap.raiseAmount;
-      spike.colliderPosition.set(
-        Math.cos(spike.angle) * gameplayLaneRadius,
-        spike.mesh.position.y + platformSpikeHeight * 0.22,
-        Math.sin(spike.angle) * gameplayLaneRadius
-      );
-      trap.platformGroup.localToWorld(spike.colliderPosition);
-    }
-
-    if (trap.raiseAmount < 0.55) continue;
-    for (const spike of trap.spikes) {
-      if (ball.position.distanceToSquared(spike.colliderPosition) <= damageRadiusSq) {
-        applyDamage();
-        break;
-      }
-    }
-  }
+  obstacleSystem.updateSpikeTraps(dt);
 }
 
 function updatePillarSpikes(dt) {
-  const damageRadius = getPlayerHitboxRadius() + 0.18;
-  const damageRadiusSq = damageRadius * damageRadius;
-
-  for (const ps of pillarSpikes) {
-    ps.colliderPosition.set(ledgeRadialLength, 0, 0);
-    ps.group.localToWorld(ps.colliderPosition);
-    const dx = ball.position.x - ps.colliderPosition.x;
-    const dy = ball.position.y - ps.colliderPosition.y;
-    const dz = ball.position.z - ps.colliderPosition.z;
-    if (dx * dx + dy * dy + dz * dz <= damageRadiusSq) {
-      applyDamage();
-    }
-  }
+  obstacleSystem.updatePillarSpikes(dt);
 }
 
 function updateSawBlades(dt) {
-  for (const sawBlade of sawBlades) {
-    sawBlade.y += sawBlade.speed * dt;
-    positionSawBlade(sawBlade);
-    sawBlade.group.rotation.z += dt * 9;
-    sawBlade.group.getWorldPosition(_sawBladeWorldPosition);
-
-    const damageRadius = getPlayerHitboxRadius() + sawBlade.collisionRadius;
-    if (ball.position.distanceToSquared(_sawBladeWorldPosition) <= damageRadius * damageRadius) {
-      applyDamage();
-    }
-  }
+  obstacleSystem.updateSawBlades(dt);
 }
 
 function updateShockwaves(dt) {
@@ -3006,25 +1628,7 @@ function updateShockwaves(dt) {
 }
 
 function updatePillarLaserRings(dt) {
-  const hitbox = getPlayerHitboxRadius();
-  for (let i = pillarLaserRings.length - 1; i >= 0; i -= 1) {
-    const ring = pillarLaserRings[i];
-    const cycle = laserRingOnTime + laserRingOffTime;
-    ring.timer = (ring.timer + dt) % cycle;
-    const active = ring.timer < laserRingOnTime;
-    ring.mesh.visible = true;
-    ring.mesh.material.opacity = active ? 0.72 : 0.09;
-    if (active) {
-      const vertical = Math.abs(ball.position.y - ring.mesh.position.y);
-      const radial = Math.abs(Math.hypot(ball.position.x, ball.position.z) - gameplayLaneRadius);
-      if (vertical <= hitbox + 0.06 && radial <= hitbox + 0.18) applyDamage();
-    }
-    if (ring.mesh.position.y > ball.position.y + 15) {
-      ring.mesh.removeFromParent();
-      ring.mesh.material.dispose();
-      pillarLaserRings.splice(i, 1);
-    }
-  }
+  obstacleSystem.updatePillarLaserRings(dt);
 }
 
 function updateParticles(dt) {
@@ -3550,22 +2154,15 @@ const _ballBottomCollider = new THREE.Vector3();
 const _ballTopCollider = new THREE.Vector3();
 const _ballLeftCollider = new THREE.Vector3();
 const _ballRightCollider = new THREE.Vector3();
-const _enemyLocalPosition = new THREE.Vector3();
-const _enemyFallLocalPosition = new THREE.Vector3();
 const _enemyWorldPosition = new THREE.Vector3();
-const _floaterWorldPos = new THREE.Vector3();
 const _enemySegmentWorldPosition = new THREE.Vector3();
 const _acidSnailBodyWorldPosition = new THREE.Vector3();
 const _acidSnailShellWorldPosition = new THREE.Vector3();
 const _acidSnailHeadWorldPosition = new THREE.Vector3();
 const _platformUndersidePoint = new THREE.Vector3();
 const _enemyProjectedPosition = new THREE.Vector3();
-const _cannonMouthWorldPosition = new THREE.Vector3();
-const _cannonLosPoint = new THREE.Vector3();
-const _cannonWorldPosition = new THREE.Vector3();
 const _pillarWormNormal = new THREE.Vector3();
 const _ballRadialNormal = new THREE.Vector3();
-const _sawBladeWorldPosition = new THREE.Vector3();
 const _ledgePreviousBottom = new THREE.Vector3();
 const _ledgeCurrentBottom = new THREE.Vector3();
 const _ledgeStompPoint = new THREE.Vector3();
@@ -3576,17 +2173,6 @@ const collisionDebug = createCollisionDebug({
   ball,
   getWorldRotation: () => world.rotation.y,
 });
-
-function getTileAtWorldPoint(platform, worldPoint) {
-  _bulletImpactLocal.copy(worldPoint);
-  platform.group.worldToLocal(_bulletImpactLocal);
-
-  const radius = Math.hypot(_bulletImpactLocal.x, _bulletImpactLocal.z);
-  if (radius < platformInnerRadius || radius > platformOuterRadius) return null;
-
-  const angle = (Math.atan2(_bulletImpactLocal.z, _bulletImpactLocal.x) + twoPi) % twoPi;
-  return platform.tiles.find((tile) => !tile.broken && angleInArc(angle, tile.start, tile.end)) || null;
-}
 
 function checkBulletPlatformHit(bullet, previousY) {
   const currentY = bullet.mesh.position.y;
@@ -3796,27 +2382,8 @@ function updateCamera(dt) {
   }
 }
 
-const _flashA = new THREE.Color();
-const _flashB = new THREE.Color();
-
 function updateTileFlashes(dt) {
-  for (const platform of platforms) {
-    for (const tile of platform.tiles) {
-      if (!isFlashablePlatformTile(tile) || tile.broken) continue;
-
-      const baseColor = getPlatformTileColor(tile.type);
-      const flashColor = tile.type === 'gray' ? colors.grayFlash : colors.blueFlash;
-      if (tile.flashTimer > 0) {
-        tile.flashTimer = Math.max(0, tile.flashTimer - dt);
-        const t = tile.flashTimer / 0.3;
-        _flashA.setHex(baseColor);
-        _flashB.setHex(flashColor);
-        tile.mesh.material.color.copy(_flashA.lerp(_flashB, t));
-      } else {
-        tile.mesh.material.color.setHex(baseColor);
-      }
-    }
-  }
+  updatePlatformTileFlashes(platforms, dt);
 }
 
 pauseButton.addEventListener('pointerdown', (event) => {
