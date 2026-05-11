@@ -22,7 +22,7 @@ import {
   comboShieldCost, comboShieldThreshold,
 } from './data/balance.js';
 import {
-  angleInArc, isBlueTile,
+  isBlueTile,
 } from './core/utils.js';
 import {
   playBounceSound, playFailSound, playShootSound, playEmptyAmmoSound,
@@ -41,9 +41,11 @@ import { setupInputListeners } from './systems/input.js';
 import { loadScores, submitScoreToLeaderboard, getPlayerRank } from './systems/leaderboard.js';
 import { setupSteamDeckMode } from './systems/steamDeckInput.js';
 import { integrateBallPhysics } from './systems/physics.js';
+import { createLifecycleSystem } from './systems/lifecycle.js';
 import {
   createShootingSystem,
 } from './systems/shooting.js';
+import { createCollisionSystem } from './systems/collisions.js';
 import { parseClampedFloat, parseClampedAbsFloat, parseClampedInt } from './systems/options.js';
 import { getLevelInfo as makeLevelInfo, getLevelTarget as getTargetForLevel } from './systems/levels.js';
 import { createGameAssets } from './render/assets.js';
@@ -52,9 +54,11 @@ import {
   spawnExplosion as spawnExplosionParticles,
   spawnBulletImpact as spawnBulletImpactParticles,
 } from './render/effects.js';
+import { createParticleSystem } from './render/particles.js';
+import { createFloatingTextSystem } from './render/floatingText.js';
 import {
   platformY, clearPlatformBandIndex, registerPlatformInBand,
-  unregisterPlatformFromBand, getPlatformsNearY,
+  unregisterPlatformFromBand,
   disposeTile, setGrayTileCrackStage,
   getTileAtWorldPoint, updateTileFlashes as updatePlatformTileFlashes,
   createPlatformSystem,
@@ -68,7 +72,10 @@ import { createBounceCubeSystem } from './entities/bounceCubes.js';
 import { createCrateSystem } from './entities/crates.js';
 import { createGoldBlockSystem } from './entities/goldBlocks.js';
 import { createObstacleSystem } from './entities/obstacles.js';
+import { createAcidPuddleSystem } from './entities/acidPuddles.js';
+import { createShockwaveSystem } from './entities/shockwaves.js';
 import { getDomRefs } from './ui/dom.js';
+import { createComboSystem } from './ui/combo.js';
 import { createCollisionDebug } from './debug/collisionDebug.js';
 
 const { scene, camera, renderer } = createSceneBundle();
@@ -153,9 +160,6 @@ let ammo = maxAmmo;
 let isShooting = false;
 let fireCooldown = 0;
 let combo = 0;
-let comboSprite = null;
-let comboTexture = null;
-let comboMaterial = null;
 let selectedWeapon = 'machinegun';
 let nextShotId = 1;
 let scaledTime = 0;
@@ -307,6 +311,209 @@ const drag = {
   targetRotation: 0,
 };
 
+const collisionDebug = createCollisionDebug({
+  enabled: collisionDebugEnabled,
+  scene,
+  world,
+  ball,
+  getWorldRotation: () => world.rotation.y,
+});
+
+const collisionSystem = createCollisionSystem({
+  ball,
+  ballRadius,
+  platformInnerRadius,
+  platformOuterRadius,
+  platformThickness,
+  twoPi,
+  getBallVelocity: () => ballVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  getBounceVelocity: () => bounceVelocity,
+  getPlayerHitboxRadius,
+  getIsGameOver: () => isGameOver,
+  collisionDebug,
+  getEnemyWorldPosition,
+  spawnBulletImpact,
+  damageGrayTile,
+  applyDamage,
+  resetCombo,
+  completeLevel,
+  reloadAmmo,
+  spawnFloatingText,
+  playReloadSound,
+  playBounceSound,
+  getShopUsed: () => shopUsed,
+  openShop,
+  breakCrackedTile,
+});
+
+const acidPuddleSystem = createAcidPuddleSystem({
+  scene,
+  ball,
+  enemies,
+  platforms,
+  particles,
+  acidPuddles,
+  acidPuddleMaterial,
+  acidDropletGeometry,
+  particleGeometry,
+  colors,
+  platformThickness,
+  platformInnerRadius,
+  platformOuterRadius,
+  twoPi,
+  getPlayerHitboxRadius,
+  getAcidStompImmunity: () => acidStompImmunity,
+  getAcidBurnCooldown: () => acidBurnCooldown,
+  setAcidBurnCooldown: value => { acidBurnCooldown = value; },
+  getEnemyWorldPosition,
+  removeEnemyAt,
+  damageEnemy,
+  applyDamage,
+  playAcidBurnSound,
+});
+
+const particleSystem = createParticleSystem({ particles });
+
+const floatingTextSystem = createFloatingTextSystem({
+  scene,
+  ball,
+  ballRadius,
+  floatingTexts,
+});
+
+const comboSystem = createComboSystem({
+  scene,
+  ball,
+  ballRadius,
+  comboShieldThreshold,
+  getCombo: () => combo,
+  setCombo: value => { combo = value; },
+  getComboShieldUnlocked: () => comboShieldUnlocked,
+  getComboShieldAwardedThisCombo: () => comboShieldAwardedThisCombo,
+  setComboShieldAwardedThisCombo: value => { comboShieldAwardedThisCombo = value; },
+  getHasShield: () => hasShield,
+  setHasShield: value => { hasShield = value; },
+  shieldMesh,
+  spawnFloatingText,
+});
+
+const shockwaveSystem = createShockwaveSystem({
+  scene,
+  ball,
+  enemies,
+  shockwaves,
+  shockwaveGeometry,
+  shockwaveMaterial,
+  getPlayerHitboxRadius,
+  getEnemyWorldPosition,
+  applyDamage,
+  damageEnemy,
+  playPufferExplosionSound,
+});
+
+const lifecycleSystem = createLifecycleSystem({
+  scene,
+  world,
+  ball,
+  shieldMesh,
+  enemies,
+  platforms,
+  crates,
+  goldBlocks,
+  cannons,
+  spikeTraps,
+  floaters,
+  pillarLaserRings,
+  pillarSpikes,
+  sawBlades,
+  ballStartY,
+  platformOuterRadius,
+  platformSpacing,
+  maxHp,
+  defaultMaxAmmo,
+  colors,
+  drag,
+  scoreEl,
+  levelCompleteEl,
+  pausePanelEl,
+  gameOverEl,
+  shopStatusEl,
+  getLevelTarget,
+  getIsLevelComplete: () => isLevelComplete,
+  getScore: () => score,
+  getNextPlatformId: () => nextPlatformId,
+  setScore: value => { score = value; },
+  setCurrentLevel: value => { currentLevel = value; },
+  setHp: value => { hp = value; },
+  setCoins: value => { coins = value; },
+  setMaxAmmo: value => { maxAmmo = value; },
+  setAmmo: value => { ammo = value; },
+  setSelectedWeapon: value => { selectedWeapon = value; },
+  setPendingInvulnerability: value => { pendingInvulnerability = value; },
+  setPendingShield: value => { pendingShield = value; },
+  setInvulnerabilityTimer: value => { invulnerabilityTimer = value; },
+  setHasShield: value => { hasShield = value; },
+  setAcidStompImmunity: value => { acidStompImmunity = value; },
+  setAcidBurnCooldown: value => { acidBurnCooldown = value; },
+  setReloadFlashTimer: value => { reloadFlashTimer = value; },
+  setRewardChosen: value => { rewardChosen = value; },
+  setDamageSlowdownTimer: value => { damageSlowdownTimer = value; },
+  setTimeScale: value => { timeScale = value; },
+  setGrayscaleAmount: value => { grayscaleAmount = value; },
+  setPiercingBulletsUnlocked: value => { piercingBulletsUnlocked = value; },
+  setVampiricLifeUnlocked: value => { vampiricLifeUnlocked = value; },
+  setComboShieldUnlocked: value => { comboShieldUnlocked = value; },
+  setVampiricKillCount: value => { vampiricKillCount = value; },
+  setComboShieldAwardedThisCombo: value => { comboShieldAwardedThisCombo = value; },
+  setScoreSubmittedToLeaderboard: value => { scoreSubmittedToLeaderboard = value; },
+  setBallVelocity: value => { ballVelocity = value; },
+  setPlatformsPassedThisLevel: value => { platformsPassedThisLevel = value; },
+  setNextPlatformId: value => { nextPlatformId = value; },
+  setSpikePlatformsThisLevel: value => { spikePlatformsThisLevel = value; },
+  setGroundWormsSinceTurtle: value => { groundWormsSinceTurtle = value; },
+  setAcidSnailsThisLevel: value => { acidSnailsThisLevel = value; },
+  setBounceVelocity: value => { bounceVelocity = value; },
+  setCombo: value => { combo = value; },
+  setIsGameOver: value => { isGameOver = value; },
+  setIsLevelComplete: value => { isLevelComplete = value; },
+  setIsPaused: value => { isPaused = value; },
+  setDamageCooldown: value => { damageCooldown = value; },
+  setDamageFlashTimer: value => { damageFlashTimer = value; },
+  setShakeIntensity: value => { shakeIntensity = value; },
+  setShakeDecay: value => { shakeDecay = value; },
+  setShopTilePlat: value => { shopTilePlat = value; },
+  setShopTileRef: value => { shopTileRef = value; },
+  setShopUsed: value => { shopUsed = value; },
+  clearPlatformBandIndex,
+  clearBullets,
+  disposeEnemy,
+  clearParticles: () => particleSystem.clearParticles(),
+  clearFloatingTexts: () => floatingTextSystem.clearFloatingTexts(),
+  clearShockwaves: () => shockwaveSystem.clearShockwaves(),
+  clearCoinPickups,
+  clearAcidPuddles,
+  deactivateAllBounceCubes,
+  stopShooting,
+  reloadAmmo,
+  stopInvulnerabilityMusic,
+  activatePendingPowerups,
+  updateWeaponUI,
+  updateLevelUI,
+  rebuildAmmoUI,
+  syncOptionsPanel,
+  updatePersistentUI,
+  updateLevelCompleteUI,
+  createPlatform,
+  ensureInitialLowerPlatformYellowWorm,
+  ensureInitialLowerPlatformMushroom,
+  spawnGoldBlocksForLevel,
+  spawnPillarSpikesForLevel,
+  spawnFloatersForLevel,
+  spawnSawBladesForLevel,
+  spawnPillarLaserRingsForLevel,
+});
+
 function getBulletLaneAngle() {
   return Math.atan2(ball.position.z, ball.position.x);
 }
@@ -352,34 +559,7 @@ function spawnFloatersForLevel() {
 }
 
 function spawnAcidPuddle(platformData, angle, radius, isDeath) {
-  const size = isDeath ? 0.44 : 0.22;
-  const geometry = new THREE.CircleGeometry(size, 20);
-  const material = acidPuddleMaterial.clone();
-  material.opacity = 0.85;
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.set(
-    Math.cos(angle) * radius,
-    platformThickness / 2 + 0.005,
-    Math.sin(angle) * radius
-  );
-  platformData.group.add(mesh);
-  acidPuddles.push({
-    mesh,
-    material,
-    platformData,
-    angle,
-    radius,
-    age: 0,
-    fullLife: isDeath ? 3 : 2,
-    shrinkLife: 1,
-    isDeath,
-    baseSize: size,
-    colliderPosition: new THREE.Vector3(),
-    falling: false,
-    fallVelocity: 0,
-    isDroplet: false,
-  });
+  acidPuddleSystem.spawnAcidPuddle(platformData, angle, radius, isDeath);
 }
 
 function updateFloaters(dt) {
@@ -387,160 +567,15 @@ function updateFloaters(dt) {
 }
 
 function updateAcidPuddles(dt) {
-  const damageRadius = getPlayerHitboxRadius() + 0.22;
-  const damageRadiusSq = damageRadius * damageRadius;
-
-  for (let i = acidPuddles.length - 1; i >= 0; i -= 1) {
-    const puddle = acidPuddles[i];
-
-    if (!puddle.falling) {
-      if (!puddle.emitTimer) puddle.emitTimer = 0;
-      puddle.emitTimer += dt;
-      if (puddle.emitTimer >= 0.05) {
-        puddle.emitTimer = 0;
-        const worldPos = new THREE.Vector3();
-        puddle.mesh.getWorldPosition(worldPos);
-        for (let j = 0; j < 2; j += 1) {
-          const material = new THREE.MeshBasicMaterial({ color: colors.acid, transparent: true, opacity: 1 });
-          const mesh = new THREE.Mesh(particleGeometry, material);
-          mesh.position.set(
-            worldPos.x + (Math.random() - 0.5) * 0.15,
-            worldPos.y + 0.01,
-            worldPos.z + (Math.random() - 0.5) * 0.15
-          );
-          scene.add(mesh);
-          particles.push({
-            mesh,
-            material,
-            velocity: new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3),
-            life: 0.4 + Math.random() * 0.3,
-          });
-        }
-      }
-    }
-
-    if (puddle.falling) {
-      const previousY = puddle.mesh.position.y;
-      puddle.fallVelocity -= 14 * dt;
-      puddle.mesh.position.y += puddle.fallVelocity * dt;
-
-      const dropletRadiusSq = 0.1 * 0.1;
-      for (let e = enemies.length - 1; e >= 0; e -= 1) {
-        const enemy = enemies[e];
-        const enemyPos = getEnemyWorldPosition(enemy);
-        const dx = puddle.mesh.position.x - enemyPos.x;
-        const dy = puddle.mesh.position.y - enemyPos.y;
-        const dz = puddle.mesh.position.z - enemyPos.z;
-        if (dx * dx + dy * dy + dz * dz <= dropletRadiusSq + enemy.collisionRadius * enemy.collisionRadius) {
-          if (enemy.type === 'bat' || enemy.type === 'jellyfish') {
-            removeEnemyAt(e, colors.acid);
-          } else if (enemy.type !== 'acidSnail') {
-            damageEnemy(e);
-          }
-        }
-      }
-
-      const currentY = puddle.mesh.position.y;
-      for (const platform of platforms) {
-        const platformTop = platformY(platform) + platformThickness / 2;
-        if (previousY >= platformTop && currentY <= platformTop && puddle.fallVelocity < 0) {
-          const localPos = new THREE.Vector3(puddle.mesh.position.x, platformTop, puddle.mesh.position.z);
-          platform.group.worldToLocal(localPos);
-          const r = Math.hypot(localPos.x, localPos.z);
-          const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
-          const tile = platform.tiles.find(t => !t.broken && angleInArc(a, t.start, t.end));
-          if (tile && r >= platformInnerRadius && r <= platformOuterRadius) {
-            puddle.mesh.removeFromParent();
-            puddle.mesh.geometry.dispose();
-            const size = puddle.isDeath ? 0.44 : 0.22;
-            const geometry = new THREE.CircleGeometry(size, 20);
-            const material = acidPuddleMaterial.clone();
-            material.opacity = 0.85;
-            const newMesh = new THREE.Mesh(geometry, material);
-            newMesh.rotation.x = -Math.PI / 2;
-            newMesh.position.set(localPos.x, platformThickness / 2 + 0.005, localPos.z);
-            platform.group.add(newMesh);
-            puddle.mesh = newMesh;
-            puddle.material = material;
-            puddle.platformData = platform;
-            puddle.angle = a;
-            puddle.radius = r;
-            puddle.age = 0;
-            puddle.falling = false;
-            puddle.fallVelocity = 0;
-            puddle.isDroplet = false;
-            puddle.baseSize = size;
-            break;
-          }
-        }
-      }
-      continue;
-    }
-
-    puddle.age += dt;
-    const totalLife = puddle.fullLife + puddle.shrinkLife;
-
-    if (puddle.age > puddle.fullLife) {
-      const shrinkT = (puddle.age - puddle.fullLife) / puddle.shrinkLife;
-      const scale = Math.max(0, 1 - shrinkT);
-      puddle.mesh.scale.setScalar(scale);
-      puddle.material.opacity = 0.85 * scale;
-    }
-
-    if (puddle.age >= totalLife) {
-      puddle.mesh.removeFromParent();
-      puddle.mesh.geometry.dispose();
-      puddle.material.dispose();
-      acidPuddles.splice(i, 1);
-      continue;
-    }
-
-    puddle.colliderPosition.set(
-      Math.cos(puddle.angle) * puddle.radius,
-      platformThickness / 2 + 0.02,
-      Math.sin(puddle.angle) * puddle.radius
-    );
-    puddle.platformData.group.localToWorld(puddle.colliderPosition);
-
-    if (acidStompImmunity <= 0 && acidBurnCooldown <= 0 && ball.position.distanceToSquared(puddle.colliderPosition) <= damageRadiusSq) {
-      applyDamage();
-      playAcidBurnSound();
-      acidBurnCooldown = 0.5;
-    }
-  }
+  acidPuddleSystem.updateAcidPuddles(dt);
 }
 
 function detachAcidPuddlesFromTile(platform, tile) {
-  for (const puddle of acidPuddles) {
-    if (puddle.falling || puddle.platformData !== platform) continue;
-    const angle = (puddle.angle + twoPi) % twoPi;
-    if (angleInArc(angle, tile.start, tile.end)) {
-      const worldPos = new THREE.Vector3();
-      puddle.mesh.getWorldPosition(worldPos);
-      puddle.mesh.removeFromParent();
-      puddle.mesh.geometry.dispose();
-      const dropletMaterial = acidPuddleMaterial.clone();
-      dropletMaterial.opacity = 0.9;
-      const dropletMesh = new THREE.Mesh(acidDropletGeometry, dropletMaterial);
-      dropletMesh.position.copy(worldPos);
-      scene.add(dropletMesh);
-      puddle.mesh = dropletMesh;
-      puddle.material = dropletMaterial;
-      puddle.falling = true;
-      puddle.fallVelocity = 0;
-      puddle.isDroplet = true;
-      puddle.platformData = null;
-    }
-  }
+  acidPuddleSystem.detachAcidPuddlesFromTile(platform, tile);
 }
 
 function clearAcidPuddles() {
-  while (acidPuddles.length) {
-    const puddle = acidPuddles.pop();
-    puddle.mesh.removeFromParent();
-    puddle.mesh.geometry.dispose();
-    puddle.material.dispose();
-  }
+  acidPuddleSystem.clearAcidPuddles();
 }
 
 function createAcidSnail(platformData, id, tile) {
@@ -686,65 +721,15 @@ function reloadAmmo() {
 }
 
 function updateComboSprite() {
-  if (combo <= 0) {
-    if (comboSprite) {
-      comboSprite.removeFromParent();
-      comboTexture.dispose();
-      comboMaterial.dispose();
-      comboSprite = null;
-      comboTexture = null;
-      comboMaterial = null;
-    }
-    return;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 128;
-  const context = canvas.getContext('2d');
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.font = '900 64px Inter, Arial, sans-serif';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.lineWidth = 8;
-  context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-  context.strokeText(String(combo), canvas.width / 2, canvas.height / 2);
-  context.fillStyle = '#ffc107';
-  context.fillText(String(combo), canvas.width / 2, canvas.height / 2);
-  if (comboTexture) comboTexture.dispose();
-  if (comboMaterial) comboMaterial.dispose();
-  if (comboSprite) comboSprite.removeFromParent();
-  comboTexture = new THREE.CanvasTexture(canvas);
-  comboMaterial = new THREE.SpriteMaterial({ map: comboTexture, transparent: true, depthTest: false });
-  comboSprite = new THREE.Sprite(comboMaterial);
-  comboSprite.position.copy(ball.position);
-  comboSprite.position.y += ballRadius + 0.28;
-  comboSprite.scale.set(1.35, 0.68, 1);
-  comboSprite.renderOrder = 20;
-  scene.add(comboSprite);
+  comboSystem.updateComboSprite();
 }
 
 function increaseCombo() {
-  combo += 1;
-  updateComboSprite();
-  if (comboShieldUnlocked && combo >= comboShieldThreshold && !comboShieldAwardedThisCombo) {
-    comboShieldAwardedThisCombo = true;
-    if (!hasShield) {
-      hasShield = true;
-      shieldMesh.visible = true;
-      spawnFloatingText('COMBO SHIELD', ball.position, 0x80deea, true);
-    }
-  }
+  comboSystem.increaseCombo();
 }
 
 function resetCombo(showLoss = true) {
-  if (combo <= 0) return;
-  combo = 0;
-  comboShieldAwardedThisCombo = false;
-  updateComboSprite();
-  updateComboSprite();
-  if (showLoss) {
-    spawnFloatingText('Combo Loss', ball.position, 0xff7043, true);
-  }
+  comboSystem.resetCombo(showLoss);
 }
 
 function setShootingImpulse(value) {
@@ -1385,114 +1370,15 @@ function damageEnemy(enemyIndex) {
 }
 
 function explodePuffer(position) {
-  playPufferExplosionSound();
-  const material = shockwaveMaterial.clone();
-  const mesh = new THREE.Mesh(shockwaveGeometry, material);
-  mesh.position.copy(position);
-  mesh.scale.setScalar(0.1);
-  scene.add(mesh);
-  shockwaves.push({ mesh, material, position: position.clone(), radius: 0.1, maxRadius: 2.2, life: 0.55, maxLife: 0.55, damagedEnemies: new Set(), damagedPlayer: false });
+  shockwaveSystem.explodePuffer(position);
 }
 
 function getBallColliderPositions() {
-  const offset = getPlayerHitboxRadius();
-  const sideOffset = offset * 0.62;
-  const tangentLength = Math.hypot(ball.position.x, ball.position.z) || 1;
-  _ballTangent.set(-ball.position.z / tangentLength, 0, ball.position.x / tangentLength);
-
-  _ballBottomCollider.copy(ball.position).y -= offset;
-  _ballTopCollider.copy(ball.position).y += offset;
-  _ballLeftCollider.copy(ball.position).addScaledVector(_ballTangent, -sideOffset);
-  _ballRightCollider.copy(ball.position).addScaledVector(_ballTangent, sideOffset);
-
-  return {
-    bottom: _ballBottomCollider,
-    top: _ballTopCollider,
-    left: _ballLeftCollider,
-    right: _ballRightCollider,
-  };
+  return collisionSystem.getBallColliderPositions();
 }
 
 function getBallEnemyContact(enemy) {
-  const colliders = getBallColliderPositions();
-  const hitboxRadius = getPlayerHitboxRadius();
-  const sideHitboxRadius = hitboxRadius * 0.55;
-  if (enemy.type === 'pillarWorm') {
-    if (!enemy.interactable) return null;
-    const stompRadius = enemy.collisionRadius + ballRadius * 0.8;
-    const contactRadius = enemy.collisionRadius + hitboxRadius;
-    const sideContactRadius = enemy.collisionRadius + sideHitboxRadius;
-    if (colliders.bottom.distanceToSquared(enemy.collisionPosition) <= stompRadius * stompRadius) return 'bottom';
-    if (colliders.top.distanceToSquared(enemy.collisionPosition) <= contactRadius * contactRadius) return 'top';
-    if (colliders.left.distanceToSquared(enemy.collisionPosition) <= sideContactRadius * sideContactRadius) return 'left';
-    if (colliders.right.distanceToSquared(enemy.collisionPosition) <= sideContactRadius * sideContactRadius) return 'right';
-    return null;
-  }
-
-  if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm') {
-    const stompRadius = enemy.collisionRadius + ballRadius * 0.75;
-    const contactRadius = enemy.collisionRadius + hitboxRadius;
-    const sideContactRadius = enemy.collisionRadius + sideHitboxRadius;
-    for (const segment of enemy.segments) {
-      segment.getWorldPosition(_enemySegmentWorldPosition);
-      if (colliders.bottom.distanceToSquared(_enemySegmentWorldPosition) <= stompRadius * stompRadius) return 'bottom';
-    }
-    for (const segment of enemy.segments) {
-      segment.getWorldPosition(_enemySegmentWorldPosition);
-      if (colliders.top.distanceToSquared(_enemySegmentWorldPosition) <= contactRadius * contactRadius) return 'top';
-      if (colliders.left.distanceToSquared(_enemySegmentWorldPosition) <= sideContactRadius * sideContactRadius) return 'left';
-      if (colliders.right.distanceToSquared(_enemySegmentWorldPosition) <= sideContactRadius * sideContactRadius) return 'right';
-    }
-    return null;
-  }
-
-  if (enemy.type === 'acidSnail') {
-    enemy.body.getWorldPosition(_acidSnailBodyWorldPosition);
-    enemy.shell.getWorldPosition(_acidSnailShellWorldPosition);
-    _acidSnailHeadWorldPosition.set(0.26, 0.1, 0);
-    enemy.group.localToWorld(_acidSnailHeadWorldPosition);
-
-    const stompTargets = [
-      [_acidSnailBodyWorldPosition, 0.28],
-      [_acidSnailShellWorldPosition, 0.3],
-      [_acidSnailHeadWorldPosition, 0.2],
-    ];
-
-    for (const [target, radius] of stompTargets) {
-      const stompRadius = radius + ballRadius * 0.75;
-      if (colliders.bottom.distanceToSquared(target) <= stompRadius * stompRadius) return 'bottom';
-    }
-
-    const topY = Math.max(
-      _acidSnailBodyWorldPosition.y + 0.18,
-      _acidSnailShellWorldPosition.y + 0.2,
-      _acidSnailHeadWorldPosition.y + 0.08
-    );
-
-    for (const [target, radius] of stompTargets) {
-      const contactRadius = radius + hitboxRadius * 0.92;
-      const sideContactRadius = radius + sideHitboxRadius;
-      if (colliders.top.distanceToSquared(target) <= contactRadius * contactRadius) return 'top';
-      if (colliders.left.y <= topY - 0.02 && colliders.left.distanceToSquared(target) <= sideContactRadius * sideContactRadius) return 'left';
-      if (colliders.right.y <= topY - 0.02 && colliders.right.distanceToSquared(target) <= sideContactRadius * sideContactRadius) return 'right';
-    }
-
-    return null;
-  }
-
-  const hitRadius = enemy.collisionRadius + hitboxRadius;
-  const hitRadiusSq = hitRadius * hitRadius;
-  const sideHitRadius = enemy.collisionRadius + sideHitboxRadius;
-  const sideHitRadiusSq = sideHitRadius * sideHitRadius;
-  const collisionPosition = getEnemyWorldPosition(enemy);
-
-  if (colliders.bottom.distanceToSquared(collisionPosition) <= hitRadiusSq) return 'bottom';
-  if (colliders.top.distanceToSquared(collisionPosition) <= hitRadiusSq) return 'top';
-  if (colliders.left.distanceToSquared(collisionPosition) <= sideHitRadiusSq) return 'left';
-  if (colliders.right.distanceToSquared(collisionPosition) <= sideHitRadiusSq) return 'right';
-
-  const fallbackRadius = enemy.collisionRadius + sideHitboxRadius;
-  return ball.position.distanceToSquared(collisionPosition) <= fallbackRadius * fallbackRadius ? 'body' : null;
+  return collisionSystem.getBallEnemyContact(enemy);
 }
 
 function checkBulletCrateHit(bullet, previousY) {
@@ -1597,34 +1483,7 @@ function updateSawBlades(dt) {
 }
 
 function updateShockwaves(dt) {
-  for (let i = shockwaves.length - 1; i >= 0; i -= 1) {
-    const shockwave = shockwaves[i];
-    const previousRadius = shockwave.radius;
-    shockwave.life -= dt;
-    const progress = 1 - Math.max(0, shockwave.life / shockwave.maxLife);
-    shockwave.radius = THREE.MathUtils.lerp(0.1, shockwave.maxRadius, progress);
-    shockwave.mesh.scale.setScalar(shockwave.radius);
-    shockwave.material.opacity = Math.max(0, 0.42 * (1 - progress));
-    if (!shockwave.damagedPlayer && ball.position.distanceToSquared(shockwave.position) <= (shockwave.radius + getPlayerHitboxRadius()) ** 2) {
-      shockwave.damagedPlayer = true;
-      applyDamage();
-    }
-    for (let e = enemies.length - 1; e >= 0; e -= 1) {
-      const enemy = enemies[e];
-      if (shockwave.damagedEnemies.has(enemy)) continue;
-      const pos = getEnemyWorldPosition(enemy);
-      const effectiveRadius = Math.max(shockwave.radius, previousRadius) + enemy.collisionRadius + 0.35;
-      if (pos.distanceToSquared(shockwave.position) <= effectiveRadius * effectiveRadius) {
-        shockwave.damagedEnemies.add(enemy);
-        damageEnemy(e);
-      }
-    }
-    if (shockwave.life <= 0) {
-      shockwave.mesh.removeFromParent();
-      shockwave.material.dispose();
-      shockwaves.splice(i, 1);
-    }
-  }
+  shockwaveSystem.updateShockwaves(dt);
 }
 
 function updatePillarLaserRings(dt) {
@@ -1632,229 +1491,31 @@ function updatePillarLaserRings(dt) {
 }
 
 function updateParticles(dt) {
-  for (let i = particles.length - 1; i >= 0; i -= 1) {
-    const particle = particles[i];
-    particle.life -= dt;
-    particle.velocity.y += (particle.gravity ?? -3.5) * dt;
-    particle.mesh.position.addScaledVector(particle.velocity, dt);
-    particle.mesh.scale.multiplyScalar(0.965);
-    particle.material.opacity = THREE.MathUtils.clamp(particle.life / (particle.maxLife ?? 0.8), 0, 1);
-
-    if (particle.life <= 0) {
-      particle.mesh.removeFromParent();
-      particle.material.dispose();
-      particles.splice(i, 1);
-    }
-  }
+  particleSystem.updateParticles(dt);
 }
 
 function spawnFloatingText(text, position, color = 0x2ecc71, followBall = false) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 128;
-  const context = canvas.getContext('2d');
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.font = '900 64px Inter, Arial, sans-serif';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.lineWidth = 8;
-  context.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-  context.strokeText(text, canvas.width / 2, canvas.height / 2);
-  context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
-  context.fillText(text, canvas.width / 2, canvas.height / 2);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
-  const sprite = new THREE.Sprite(material);
-  sprite.position.copy(position);
-  sprite.position.y += ballRadius + 0.28;
-  sprite.scale.set(1.35, 0.68, 1);
-  sprite.renderOrder = 20;
-  scene.add(sprite);
-  floatingTexts.push({ sprite, material, texture, life: 1, startY: sprite.position.y, followBall });
+  floatingTextSystem.spawnFloatingText(text, position, color, followBall);
 }
 
 function updateFloatingTexts(dt) {
-  for (let i = floatingTexts.length - 1; i >= 0; i -= 1) {
-    const item = floatingTexts[i];
-    item.life -= dt;
-    const progress = 1 - Math.max(0, item.life);
-    if (item.followBall) {
-      item.sprite.position.copy(ball.position);
-      item.sprite.position.y += ballRadius + 0.28 + progress * 1.1;
-    } else {
-      item.sprite.position.y = item.startY + progress * 1.1;
-    }
-    item.sprite.material.opacity = Math.max(0, item.life);
-    const scale = 1 + progress * 0.22;
-    item.sprite.scale.set(1.35 * scale, 0.68 * scale, 1);
-
-    if (item.life <= 0) {
-      item.sprite.removeFromParent();
-      item.texture.dispose();
-      item.material.dispose();
-      floatingTexts.splice(i, 1);
-    }
-  }
+  floatingTextSystem.updateFloatingTexts(dt);
 }
 
 function clearEnemiesAndParticles() {
-  while (enemies.length) {
-    disposeEnemy(enemies.pop());
-  }
-  while (particles.length) {
-    const particle = particles.pop();
-    particle.mesh.removeFromParent();
-    particle.material.dispose();
-  }
-  while (floatingTexts.length) {
-    const item = floatingTexts.pop();
-    item.sprite.removeFromParent();
-    item.texture.dispose();
-    item.material.dispose();
-  }
-  while (shockwaves.length) {
-    const shockwave = shockwaves.pop();
-    shockwave.mesh.removeFromParent();
-    shockwave.material.dispose();
-  }
+  lifecycleSystem.clearEnemiesAndParticles();
 }
 
 function clearTower() {
-  clearPlatformBandIndex();
-  clearBullets();
-  clearEnemiesAndParticles();
-  clearCoinPickups();
-  clearAcidPuddles();
-  deactivateAllBounceCubes();
-  crates.length = 0;
-  goldBlocks.length = 0;
-  cannons.length = 0;
-spikeTraps.length = 0;
-  while (floaters.length) {
-    const f = floaters.pop();
-    world.remove(f.mesh);
-    f.mesh.geometry.dispose();
-  }
-  while (pillarLaserRings.length) {
-    const ring = pillarLaserRings.pop();
-    ring.mesh.removeFromParent();
-    ring.mesh.material.dispose();
-  }
-  while (pillarSpikes.length) {
-    const ps = pillarSpikes.pop();
-    world.remove(ps.group);
-    ps.group.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
-  }
-
-  while (sawBlades.length) {
-    const sawBlade = sawBlades.pop();
-    world.remove(sawBlade.group);
-    sawBlade.group.traverse((child) => {
-      if (child.material) child.material.dispose();
-    });
-  }
-
-  while (platforms.length) {
-    const platform = platforms.pop();
-    world.remove(platform.group);
-    platform.group.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
-  }
+  lifecycleSystem.clearTower();
 }
 
 function startLevel() {
-  clearTower();
-
-  ball.position.set(0, ballStartY, platformOuterRadius - 0.8);
-  ballVelocity = 0;
-  platformsPassedThisLevel = 0;
-  nextPlatformId = 0;
-  spikePlatformsThisLevel = 0;
-  groundWormsSinceTurtle = 0;
-  acidSnailsThisLevel = 0;
-  clearAcidPuddles();
-  bounceVelocity = 7.7;
-  world.rotation.y = 0;
-  drag.targetRotation = 0;
-  combo = 0;
-  isGameOver = false;
-  isLevelComplete = false;
-  levelCompleteEl.hidden = true;
-  pausePanelEl.hidden = true;
-  isPaused = false;
-  stopShooting();
-  reloadAmmo();
-  damageCooldown = 0;
-  damageFlashTimer = 0;
-  shakeIntensity = 0;
-  shakeDecay = 0;
-  invulnerabilityTimer = 0;
-  acidStompImmunity = 0;
-  acidBurnCooldown = 0;
-  reloadFlashTimer = 0;
-  shopTilePlat = null;
-  shopTileRef = null;
-  shopUsed = false;
-  scoreEl.textContent = String(score);
-  updateLevelUI();
-  gameOverEl.hidden = true;
-  ball.material.color.setHex(colors.ball);
-  stopInvulnerabilityMusic();
-  activatePendingPowerups();
-  updateWeaponUI();
-
-  const target = getLevelTarget();
-  for (let i = 0; i <= target; i += 1) {
-    createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
-    nextPlatformId += 1;
-  }
-  ensureInitialLowerPlatformYellowWorm();
-  ensureInitialLowerPlatformMushroom();
-  spawnGoldBlocksForLevel();
-  spawnPillarSpikesForLevel();
-  spawnFloatersForLevel();
-  spawnSawBladesForLevel();
-  spawnPillarLaserRingsForLevel();
+  lifecycleSystem.startLevel();
 }
 
 function resetGame() {
-  score = 0;
-  currentLevel = 1;
-  hp = maxHp;
-  coins = 0;
-  maxAmmo = defaultMaxAmmo;
-  ammo = defaultMaxAmmo;
-  selectedWeapon = 'machinegun';
-  pendingInvulnerability = false;
-  pendingShield = false;
-  invulnerabilityTimer = 0;
-  hasShield = false;
-  acidStompImmunity = 0;
-  acidBurnCooldown = 0;
-  reloadFlashTimer = 0;
-  rewardChosen = false;
-  shieldMesh.visible = false;
-  damageSlowdownTimer = 0;
-  timeScale = 1;
-  grayscaleAmount = 0;
-  piercingBulletsUnlocked = false;
-  vampiricLifeUnlocked = false;
-  comboShieldUnlocked = false;
-  vampiricKillCount = 0;
-  comboShieldAwardedThisCombo = false;
-  scoreSubmittedToLeaderboard = false;
-  if (scene.background) scene.background.setHex(0xeef7ff);
-  rebuildAmmoUI();
-  updateWeaponUI();
-  syncOptionsPanel();
-  updatePersistentUI();
-  startLevel();
+  lifecycleSystem.resetGame();
 }
 
 function endGame() {
@@ -2127,195 +1788,40 @@ function updateLevelCompleteUI() {
 }
 
 function completeLevel() {
-  if (isLevelComplete) return;
-  isLevelComplete = true;
-  stopShooting();
-  stopInvulnerabilityMusic();
-  score += 100;
-  scoreEl.textContent = String(score);
-  rewardChosen = false;
-  platformsPassedThisLevel = getLevelTarget();
-  updateLevelUI();
-  ballVelocity = 0;
-  levelCompleteEl.hidden = false;
-  shopStatusEl.textContent = '';
-  updateLevelCompleteUI();
+  lifecycleSystem.completeLevel();
 }
 
-const _ballLocal = new THREE.Vector3();
-const _bulletImpactPoint = new THREE.Vector3();
 const _bulletImpactLocal = new THREE.Vector3();
 const _crateWorldPosition = new THREE.Vector3();
 const _coinLocalPosition = new THREE.Vector3();
 const _pickupWorldPosition = new THREE.Vector3();
 const _bounceCubeLocalPosition = new THREE.Vector3();
-const _ballTangent = new THREE.Vector3();
-const _ballBottomCollider = new THREE.Vector3();
-const _ballTopCollider = new THREE.Vector3();
-const _ballLeftCollider = new THREE.Vector3();
-const _ballRightCollider = new THREE.Vector3();
 const _enemyWorldPosition = new THREE.Vector3();
-const _enemySegmentWorldPosition = new THREE.Vector3();
-const _acidSnailBodyWorldPosition = new THREE.Vector3();
-const _acidSnailShellWorldPosition = new THREE.Vector3();
-const _acidSnailHeadWorldPosition = new THREE.Vector3();
-const _platformUndersidePoint = new THREE.Vector3();
 const _enemyProjectedPosition = new THREE.Vector3();
 const _pillarWormNormal = new THREE.Vector3();
 const _ballRadialNormal = new THREE.Vector3();
 const _ledgePreviousBottom = new THREE.Vector3();
 const _ledgeCurrentBottom = new THREE.Vector3();
 const _ledgeStompPoint = new THREE.Vector3();
-const collisionDebug = createCollisionDebug({
-  enabled: collisionDebugEnabled,
-  scene,
-  world,
-  ball,
-  getWorldRotation: () => world.rotation.y,
-});
 
 function checkBulletPlatformHit(bullet, previousY) {
-  const currentY = bullet.mesh.position.y;
-  const crossedPlatforms = [];
-
-  for (const platform of getPlatformsNearY(Math.min(previousY, currentY), Math.max(previousY, currentY))) {
-    const platformTop = platformY(platform) + platformThickness / 2;
-    if (previousY >= platformTop && currentY <= platformTop) {
-      crossedPlatforms.push({ platform, platformTop });
-    }
-  }
-
-  crossedPlatforms.sort((a, b) => b.platformTop - a.platformTop);
-
-  for (const collision of crossedPlatforms) {
-    _bulletImpactPoint.set(bullet.mesh.position.x, collision.platformTop + 0.035, bullet.mesh.position.z);
-    const tile = getTileAtWorldPoint(collision.platform, _bulletImpactPoint);
-    if (!tile) continue;
-
-    spawnBulletImpact(_bulletImpactPoint);
-    if (tile.type === 'gray') {
-      damageGrayTile(collision.platform, tile);
-    }
-    return true;
-  }
-
-  return false;
+  return collisionSystem.checkBulletPlatformHit(bullet, previousY);
 }
 
 function getBallContactOnPlatform(platform) {
-  _ballLocal.copy(ball.position);
-  platform.group.worldToLocal(_ballLocal);
-
-  const radius = Math.hypot(_ballLocal.x, _ballLocal.z);
-  const angle = (Math.atan2(_ballLocal.z, _ballLocal.x) + twoPi) % twoPi;
-  const tile = radius >= platformInnerRadius && radius <= platformOuterRadius
-    ? platform.tiles.find((candidate) => !candidate.broken && angleInArc(angle, candidate.start, candidate.end)) || null
-    : null;
-
-  return { angle, radius, tile, localX: _ballLocal.x, localZ: _ballLocal.z };
+  return collisionSystem.getBallContactOnPlatform(platform);
 }
 
 function isSolidUndersideTile(tile) {
-  return tile && !tile.broken && (tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'red' || tile.type === 'gray');
+  return collisionSystem.isSolidUndersideTile(tile);
 }
 
 function handlePlatformUndersideCollision(previousY) {
-  if (ballVelocity <= 0) return;
-
-  const topBefore = previousY + ballRadius;
-  const topNow = ball.position.y + ballRadius;
-  const crossedPlatforms = [];
-
-  for (const platform of getPlatformsNearY(Math.min(topBefore, topNow), Math.max(topBefore, topNow))) {
-    const platformBottom = platformY(platform) - platformThickness / 2;
-    if (topBefore <= platformBottom && topNow >= platformBottom) {
-      crossedPlatforms.push({ platform, platformBottom });
-    }
-  }
-
-  crossedPlatforms.sort((a, b) => a.platformBottom - b.platformBottom);
-
-  for (const collision of crossedPlatforms) {
-    _platformUndersidePoint.set(ball.position.x, collision.platformBottom - 0.035, ball.position.z);
-    const tile = getTileAtWorldPoint(collision.platform, _platformUndersidePoint);
-    if (!isSolidUndersideTile(tile)) continue;
-
-    ball.position.y = collision.platformBottom - ballRadius;
-    ballVelocity = -Math.max(1.2, bounceVelocity * 0.22);
-    return;
-  }
+  collisionSystem.handlePlatformUndersideCollision(previousY);
 }
 
 function handlePlatformCollision(previousY) {
-  if (ballVelocity >= 0) return;
-
-  const bottomNow = ball.position.y - ballRadius;
-  const bottomBefore = previousY - ballRadius;
-  const crossedPlatforms = [];
-
-  for (const platform of getPlatformsNearY(Math.min(bottomBefore, bottomNow), Math.max(bottomBefore, bottomNow))) {
-    const platformTop = platformY(platform) + platformThickness / 2;
-
-    if (bottomBefore >= platformTop && bottomNow <= platformTop) {
-      crossedPlatforms.push({ platform, platformTop });
-    }
-  }
-
-  crossedPlatforms.sort((a, b) => b.platformTop - a.platformTop);
-
-  for (const collision of crossedPlatforms) {
-    const { platform, platformTop } = collision;
-    const contact = getBallContactOnPlatform(platform);
-    collisionDebug.update(platform, contact, platformTop);
-
-    if (!contact.tile) continue;
-
-    if (contact.tile.type === 'red') {
-      contact.tile.material.emissive.setHex(0x7a0000);
-      contact.tile.material.emissiveIntensity = 0.45;
-      applyDamage();
-      if (!isGameOver) resetCombo();
-      ball.position.y = platformTop + ballRadius;
-      ballVelocity = bounceVelocity * 0.72;
-      return;
-    }
-
-    if (contact.tile.type === 'finish') {
-      ball.position.y = platformTop + ballRadius;
-      ballVelocity = 0;
-      completeLevel();
-      return;
-    }
-
-    if (contact.tile.type === 'shop' && !shopUsed) {
-      ball.position.y = platformTop + ballRadius;
-      ballVelocity = bounceVelocity;
-      resetCombo();
-      if (reloadAmmo()) {
-        spawnFloatingText('Reload', ball.position);
-        playReloadSound();
-      }
-      playBounceSound();
-      contact.tile.flashTimer = 0.3;
-      openShop();
-      return;
-    }
-
-    ball.position.y = platformTop + ballRadius;
-    ballVelocity = bounceVelocity;
-    resetCombo();
-    if (reloadAmmo()) {
-      spawnFloatingText('Reload', ball.position);
-      playReloadSound();
-    }
-    playBounceSound();
-    if (contact.tile.type === 'crackedBlue') {
-      breakCrackedTile(platform, contact.tile);
-    } else {
-      contact.tile.flashTimer = 0.3;
-    }
-    return;
-  }
+  collisionSystem.handlePlatformCollision(previousY);
 }
 
 function recyclePlatforms() {
@@ -2778,10 +2284,7 @@ function animate() {
     updateBounceCubes(dt);
     recyclePlatforms();
     updateFloatingTexts(dt);
-    if (comboSprite) {
-      comboSprite.position.copy(ball.position);
-      comboSprite.position.y += ballRadius + 0.28;
-    }
+    comboSystem.updateComboPosition();
     updateTileFlashes(dt);
     updateCamera(dt);
   }
