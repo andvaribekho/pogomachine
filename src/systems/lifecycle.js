@@ -29,6 +29,7 @@ export function createLifecycleSystem({
   getIsLevelComplete,
   getScore,
   getNextPlatformId,
+  getPlatformsPassedThisLevel,
   setScore,
   setCurrentLevel,
   setHp,
@@ -99,6 +100,18 @@ export function createLifecycleSystem({
   spawnSawBladesForLevel,
   spawnPillarLaserRingsForLevel,
 }) {
+  const rollingPlatformAheadCount = 12;
+
+  function generatePlatformsThrough(maxPlatformId) {
+    const target = getLevelTarget();
+    const cappedMaxId = Math.min(target, maxPlatformId);
+    while (getNextPlatformId() <= cappedMaxId) {
+      const nextPlatformId = getNextPlatformId();
+      createPlatform(-nextPlatformId * platformSpacing, nextPlatformId, { final: nextPlatformId === target });
+      setNextPlatformId(nextPlatformId + 1);
+    }
+  }
+
   function clearEnemiesAndParticles() {
     while (enemies.length) {
       disposeEnemy(enemies.pop());
@@ -200,12 +213,7 @@ export function createLifecycleSystem({
     activatePendingPowerups();
     updateWeaponUI();
 
-    const target = getLevelTarget();
-    for (let i = 0; i <= target; i += 1) {
-      const nextPlatformId = getNextPlatformId();
-      createPlatform(-i * platformSpacing, nextPlatformId, { final: i === target });
-      setNextPlatformId(nextPlatformId + 1);
-    }
+    generatePlatformsThrough(getPlatformsPassedThisLevel() + rollingPlatformAheadCount);
     ensureInitialLowerPlatformYellowWorm();
     ensureInitialLowerPlatformMushroom();
     spawnGoldBlocksForLevel();

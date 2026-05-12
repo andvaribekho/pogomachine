@@ -26,6 +26,7 @@ export function createAcidPuddleSystem({
   damageEnemy,
   applyDamage,
   playAcidBurnSound,
+  spawnParticle,
 }) {
   function spawnAcidPuddle(platformData, angle, radius, isDeath) {
     const size = isDeath ? 0.44 : 0.22;
@@ -73,20 +74,26 @@ export function createAcidPuddleSystem({
           const worldPos = new THREE.Vector3();
           puddle.mesh.getWorldPosition(worldPos);
           for (let j = 0; j < 2; j += 1) {
-            const material = new THREE.MeshBasicMaterial({ color: colors.acid, transparent: true, opacity: 1 });
-            const mesh = new THREE.Mesh(particleGeometry, material);
-            mesh.position.set(
+            const particlePosition = new THREE.Vector3(
               worldPos.x + (Math.random() - 0.5) * 0.15,
               worldPos.y + 0.01,
               worldPos.z + (Math.random() - 0.5) * 0.15
             );
-            scene.add(mesh);
-            particles.push({
-              mesh,
-              material,
-              velocity: new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3),
-              life: 0.4 + Math.random() * 0.3,
-            });
+            const velocity = new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3);
+            if (spawnParticle) {
+              spawnParticle({ position: particlePosition, color: colors.acid, velocity, life: 0.4 + Math.random() * 0.3 });
+            } else {
+              const material = new THREE.MeshBasicMaterial({ color: colors.acid, transparent: true, opacity: 1 });
+              const mesh = new THREE.Mesh(particleGeometry, material);
+              mesh.position.copy(particlePosition);
+              scene.add(mesh);
+              particles.push({
+                mesh,
+                material,
+                velocity,
+                life: 0.4 + Math.random() * 0.3,
+              });
+            }
           }
         }
       }

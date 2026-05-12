@@ -1,0 +1,178 @@
+# Análisis técnico — Helix Descent (Three.js + Vite)
+Fecha: 2026-05-11
+Branch: main
+Versión actual (index.html): 1.4 particle pool + broad phase
+
+================================================================
+1. PROBLEMAS REALES
+================================================================
+
+1.1 disposeEnemy no libera geometrías
+    Archivo: src/entities/enemies/combat.js:35-42
+
+    function disposeEnemy(enemy) {
+      const materials = new Set();
+      enemy.group.traverse((child) => {
+        if (child.material) materials.add(child.material);
+      });
+      if (enemy.group.parent) enemy.group.parent.remove(enemy.group);
+      materials.forEach((material) => material.dispose());
+    }
+
+    Libera materiales pero IGNORA child.geometry.dispose(). Cada enemigo
+    destruido (worms con 5-8 segmentos, tortugas, jellyfish, snails) deja
+    sus geometrías en GPU. En partidas largas esto se acumula.
+
+    Fix: añadir `if (child.geometry) child.geometry.dispose();` dentro del
+    traverse.
+
+
+1.2 Código muerto: spawnLegacyParticle
+    Archivo: src/render/effects.js:29-35
+
+    La rama:
+      particles.spawnParticle
+        ? particles.spawnParticle({...})
+        : spawnLegacyParticle({...})
+    (líneas 10-12 y 23-25) nunca cae en el fallback: en main.js:1068 siempre
+    se pasa `particleSystem` que sí tiene spawnParticle.
+
+    Es código muerto que confunde el diff "1.4 particle pool". Debe
+    eliminarse junto con el ternario para que el call site sea
+    `particles.spawnParticle({...})` directo.
+
+
+1.3 Allocaciones por frame en el game loop
+
+    - src/systems/collisions.js:148, 196, 223
+      Se crea un `crossedPlatforms = []` nuevo en cada llamada a
+      checkBulletPlatformHit / handlePlatformUndersideCollision /
+      handlePlatformCollision.
+      A 60fps con 8 balas activas son ~500 arrays/seg que se descartan.
+      Fix: pool reutilizable o `.length = 0` antes de reusar.
+
+    - src/entities/enemies/combat.js:73
+      `const position = new THREE.Vector3();` por cada enemigo eliminado.
+      Bajo impacto, pero fácil de mover a scope superior.
+
+    - src/entities/enemies/combat.js:159
+      `bullet.mesh.position.clone()` por cada bala que toca un acidSnail.
+      Innecesario si spawnBulletImpact solo copia la posición — basta con
+      pasar `bullet.mesh.position` (verificar que el callee haga .copy()).
+
+
+1.4 Worms: getWorldPosition se ejecuta el doble
+    Archivo: src/systems/collisions.js:84-93
+
+    Dos bucles separados sobre enemy.segments: el primero para `bottom`
+    collider, el segundo para `top/left/right`. Cada segmento llama
+    getWorldPosition() dos veces por frame.
+
+    Para 5 worms × 6 segmentos = 60 cálculos de matrices que se podrían
+    reducir a 30 cacheando posiciones en un array temporal una sola vez.
+
+
+================================================================
+2. OPTIMIZACIONES PRIORITARIAS
+================================================================
+
+2.A Geometrías compartidas para enemigos
+    Archivo: src/entities/enemies/meshes.js
+
+    Cada bat/turtle/worm crea geometrías nuevas por instancia. Con N
+    enemigos del mismo tipo, son N copias de la misma malla.
+
+    Mover las BoxGeometry / SphereGeometry / CylinderGeometry base a
+    constantes módulo-nivel (compartidas) y solo clonar materiales cuando
+    se necesitan emissives independientes.
+
+    Ahorra memoria GPU y reduce drawcalls si combinas con InstancedMesh
+    para enemigos masivos (worms grandes).
+
+
+2.B Tiles de plataformas
+    Archivo: src/entities/platforms.js (356 líneas)
+
+    Genera muchos tiles por nivel. Si cada tile tiene su propia
+    ShapeGeometry / ExtrudeGeometry, considera:
+
+    - Compartir geometría base por tipo de tile (blue/red/gray/finish/shop)
+      y clonar solo material cuando hace falta emisión por tile (flash).
+    - Para tiles que solo cambian color sin emissive único, un solo
+      material compartido + vertexColors o InstancedMesh.
+
+
+2.C Pool de Vector3 para impactos/explosiones
+    Archivo: src/render/effects.js:3-14
+
+    spawnExplosion crea 12-18 `new THREE.Vector3()` por explosión. En
+    combate intenso (mushroom explosivo + worm que se parte) son ~50
+    vectores que se descartan.
+
+    Pool simple:
+      const vector3Pool = [];
+      function getV3() { return vector3Pool.pop() || new THREE.Vector3(); }
+      function releaseV3(v) { vector3Pool.push(v); }
+
+
+2.D Broad-phase de balas vs enemigos
+    Archivo: src/entities/enemies/combat.js:147-173
+
+    checkBulletEnemyHit es O(balas × enemigos). Con 8 balas × 15 enemigos
+    = 120 distance checks/frame. Si el conteo crece, conviene aplicar el
+    mismo patrón de forEachPlatformNearY también para enemigos (band
+    index por Y).
+
+
+================================================================
+3. LO QUE ESTÁ BIEN
+================================================================
+
+- Broad phase de plataformas (forEachPlatformNearY): correcto, evita
+  O(n) y arrays temporales del patrón anterior.
+
+- Pool de partículas (src/render/particles.js): implementación limpia,
+  reciclado completo en releaseParticle, sin leaks.
+
+- Vectores pre-alocados en collisions.js:32-43: bien hecho, todos los
+  colliders se reutilizan.
+
+- Modularización post-refactor v2: la separación systems/ vs entities/
+  vs render/ está sana. enemies/ partido en spawn/update/meshes/combat
+  es razonable.
+
+
+================================================================
+4. ORGANIZACIÓN
+================================================================
+
+src/main.js con 1902 líneas es el único punto preocupante. Actúa como
+orquestador (importa todo, ensambla sistemas, expone callbacks). Es
+legítimo, pero hay material para extraer:
+
+- Las funciones spawnExplosion / spawnBulletImpact wrapper (líneas
+  1067-1074) y todo el bloque de wiring de callbacks (1160-1340) pueden
+  moverse a un src/systems/effects.js o src/wiring.js.
+
+- Si el archivo sigue creciendo, conviene un createGame() factory que
+  devuelva los sistemas ya conectados.
+
+obstacles.js (583 líneas) y enemies/spawn.js (451) son grandes pero
+cohesivos — no es prioridad partirlos.
+
+
+================================================================
+5. RESUMEN DE IMPACTO ESTIMADO
+================================================================
+
+- Arreglar (1.1) elimina un leak de GPU real.
+- (1.2) y (1.3) son limpieza de bajo riesgo.
+- (2.A) y (2.C) dan la mayor ganancia de rendimiento en partidas largas.
+
+Prioridad sugerida:
+  1. Fix dispose de geometrías en disposeEnemy        (alto impacto, 5 min)
+  2. Eliminar spawnLegacyParticle y simplificar       (limpieza, 5 min)
+  3. Pool de crossedPlatforms en collisions.js        (medio impacto, 15 min)
+  4. Geometrías compartidas en enemies/meshes.js      (alto impacto, 30-60 min)
+  5. Pool de Vector3 para explosiones                 (medio impacto, 15 min)
+  6. Cache getWorldPosition de segmentos de worm      (medio impacto, 10 min)

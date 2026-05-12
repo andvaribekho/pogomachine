@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { angleInArc } from '../core/utils.js';
-import { getPlatformsNearY, getTileAtWorldPoint, platformY } from '../entities/platforms.js';
+import { forEachPlatformNearY, getTileAtWorldPoint, platformY } from '../entities/platforms.js';
 
 export function createCollisionSystem({
   ball,
@@ -147,12 +147,12 @@ export function createCollisionSystem({
     const currentY = bullet.mesh.position.y;
     const crossedPlatforms = [];
 
-    for (const platform of getPlatformsNearY(Math.min(previousY, currentY), Math.max(previousY, currentY))) {
+    forEachPlatformNearY(Math.min(previousY, currentY), Math.max(previousY, currentY), (platform) => {
       const platformTop = platformY(platform) + platformThickness / 2;
       if (previousY >= platformTop && currentY <= platformTop) {
         crossedPlatforms.push({ platform, platformTop });
       }
-    }
+    });
 
     crossedPlatforms.sort((a, b) => b.platformTop - a.platformTop);
 
@@ -195,12 +195,12 @@ export function createCollisionSystem({
     const topNow = ball.position.y + ballRadius;
     const crossedPlatforms = [];
 
-    for (const platform of getPlatformsNearY(Math.min(topBefore, topNow), Math.max(topBefore, topNow))) {
+    forEachPlatformNearY(Math.min(topBefore, topNow), Math.max(topBefore, topNow), (platform) => {
       const platformBottom = platformY(platform) - platformThickness / 2;
       if (topBefore <= platformBottom && topNow >= platformBottom) {
         crossedPlatforms.push({ platform, platformBottom });
       }
-    }
+    });
 
     crossedPlatforms.sort((a, b) => a.platformBottom - b.platformBottom);
 
@@ -222,13 +222,13 @@ export function createCollisionSystem({
     const bottomBefore = previousY - ballRadius;
     const crossedPlatforms = [];
 
-    for (const platform of getPlatformsNearY(Math.min(bottomBefore, bottomNow), Math.max(bottomBefore, bottomNow))) {
+    forEachPlatformNearY(Math.min(bottomBefore, bottomNow), Math.max(bottomBefore, bottomNow), (platform) => {
       const platformTop = platformY(platform) + platformThickness / 2;
 
       if (bottomBefore >= platformTop && bottomNow <= platformTop) {
         crossedPlatforms.push({ platform, platformTop });
       }
-    }
+    });
 
     crossedPlatforms.sort((a, b) => b.platformTop - a.platformTop);
 

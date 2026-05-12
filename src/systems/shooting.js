@@ -15,6 +15,8 @@ export function shouldBlockShootingForSteamDeck(isSteamDeckModeActive, source) {
 export function createShootingSystem(ctx) {
   const shotgunTangent = new THREE.Vector3();
   const shotgunVelocity = new THREE.Vector3();
+  const defaultBulletVelocity = new THREE.Vector3(0, -ctx.bulletSpeed, 0);
+  const bulletPool = [];
 
   function currentFireInterval() {
     return getCurrentFireInterval(ctx.getSelectedWeapon(), ctx.getFireInterval(), ctx.getShotgunFireInterval());
@@ -32,17 +34,48 @@ export function createShootingSystem(ctx) {
   function clearBullets() {
     while (ctx.bullets.length) {
       const bullet = ctx.bullets.pop();
-      bullet.mesh.removeFromParent();
+      deactivateBullet(bullet);
     }
   }
 
-  function spawnBullet(velocity = new THREE.Vector3(0, -ctx.bulletSpeed, 0), shotId = 0) {
+  function createBullet() {
     const mesh = new THREE.Mesh(ctx.bulletGeometry, ctx.bulletMaterial);
-    mesh.position.copy(ctx.ball.position);
-    mesh.position.y -= ctx.ballRadius + 0.06;
+    mesh.visible = false;
     mesh.renderOrder = 5;
     ctx.scene.add(mesh);
-    ctx.bullets.push({ mesh, life: ctx.bulletLifetime, velocity: velocity.clone(), shotgunShotId: shotId, hitEnemies: new Set() });
+    return { mesh, life: 0, velocity: new THREE.Vector3(), shotgunShotId: 0, hitEnemies: new Set(), active: false };
+  }
+
+  function getPooledBullet() {
+    return bulletPool.pop() || createBullet();
+  }
+
+  function deactivateBullet(bullet) {
+    bullet.active = false;
+    bullet.mesh.visible = false;
+    bullet.mesh.scale.setScalar(1);
+    bullet.hitEnemies.clear();
+    if (bullet.mesh.parent !== ctx.scene) {
+      bullet.mesh.removeFromParent();
+      ctx.scene.add(bullet.mesh);
+    }
+    bulletPool.push(bullet);
+  }
+
+  function spawnBullet(velocity = defaultBulletVelocity, shotId = 0) {
+    const bullet = getPooledBullet();
+    const { mesh } = bullet;
+    bullet.active = true;
+    bullet.life = ctx.bulletLifetime;
+    bullet.velocity.copy(velocity);
+    bullet.shotgunShotId = shotId;
+    bullet.hitEnemies.clear();
+    mesh.position.copy(ctx.ball.position);
+    mesh.position.y -= ctx.ballRadius + 0.06;
+    mesh.scale.setScalar(1);
+    mesh.visible = true;
+    if (mesh.parent !== ctx.scene) ctx.scene.add(mesh);
+    ctx.bullets.push(bullet);
   }
 
   function fireMachinegun() {
@@ -134,8 +167,9 @@ export function createShootingSystem(ctx) {
   }
 
   function removeBullet(index) {
-    ctx.bullets[index].mesh.removeFromParent();
+    const bullet = ctx.bullets[index];
     ctx.bullets.splice(index, 1);
+    deactivateBullet(bullet);
   }
 
   function updateBullets(dt) {

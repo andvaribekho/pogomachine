@@ -50,6 +50,18 @@ export function getPlatformsNearY(yMin, yMax) {
   return result;
 }
 
+export function forEachPlatformNearY(yMin, yMax, callback) {
+  const bandMin = Math.round(yMin / platformSpacing) - 1;
+  const bandMax = Math.round(yMax / platformSpacing) + 1;
+  for (let b = bandMin; b <= bandMax; b += 1) {
+    const arr = platformBandIndex.get(b);
+    if (!arr) continue;
+    for (let i = 0; i < arr.length; i += 1) {
+      callback(arr[i]);
+    }
+  }
+}
+
 export function getPlatformTileColor(type) {
   if (type === 'red') return colors.red;
   if (type === 'finish') return colors.finish;

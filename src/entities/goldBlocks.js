@@ -39,6 +39,7 @@ export function createGoldBlockSystem({
   spawnExplosion,
   spawnBulletImpact,
   spawnBounceCubes,
+  spawnParticle,
 }) {
   function createGoldBlock(platformData, tile) {
     const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
@@ -203,19 +204,24 @@ export function createGoldBlockSystem({
     const position = localOffset.clone();
     goldBlock.mesh.localToWorld(position);
 
-    const material = new THREE.MeshBasicMaterial({ color: colors.gold, transparent: true, opacity: 0.82, depthWrite: false });
-    const mesh = new THREE.Mesh(particleGeometry, material);
-    mesh.position.copy(position);
-    mesh.scale.setScalar(0.45 + Math.random() * 0.35);
-    scene.add(mesh);
-    particles.push({
-      mesh,
-      material,
-      velocity: new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.65 + Math.random() * 0.45, (Math.random() - 0.5) * 0.12),
-      gravity: 0,
-      life: 2,
-      maxLife: 2,
-    });
+    const velocity = new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.65 + Math.random() * 0.45, (Math.random() - 0.5) * 0.12);
+    if (spawnParticle) {
+      spawnParticle({ position, color: colors.gold, velocity, gravity: 0, life: 2, maxLife: 2, opacity: 0.82, scale: 0.45 + Math.random() * 0.35, depthWrite: false });
+    } else {
+      const material = new THREE.MeshBasicMaterial({ color: colors.gold, transparent: true, opacity: 0.82, depthWrite: false });
+      const mesh = new THREE.Mesh(particleGeometry, material);
+      mesh.position.copy(position);
+      mesh.scale.setScalar(0.45 + Math.random() * 0.35);
+      scene.add(mesh);
+      particles.push({
+        mesh,
+        material,
+        velocity,
+        gravity: 0,
+        life: 2,
+        maxLife: 2,
+      });
+    }
   }
 
   function checkBulletGoldBlockHit(bullet, previousY) {

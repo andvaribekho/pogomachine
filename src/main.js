@@ -342,6 +342,8 @@ const collisionSystem = createCollisionSystem({
   breakCrackedTile,
 });
 
+const particleSystem = createParticleSystem({ scene, particles, particleGeometry });
+
 const acidPuddleSystem = createAcidPuddleSystem({
   scene,
   ball,
@@ -366,9 +368,8 @@ const acidPuddleSystem = createAcidPuddleSystem({
   damageEnemy,
   applyDamage,
   playAcidBurnSound,
+  spawnParticle: options => particleSystem.spawnParticle(options),
 });
-
-const particleSystem = createParticleSystem({ particles });
 
 const floatingTextSystem = createFloatingTextSystem({
   scene,
@@ -643,6 +644,7 @@ const lifecycleSystem = createLifecycleSystem({
   getIsLevelComplete: () => isLevelComplete,
   getScore: () => score,
   getNextPlatformId: () => nextPlatformId,
+  getPlatformsPassedThisLevel: () => platformsPassedThisLevel,
   setScore: value => { score = value; },
   setCurrentLevel: value => { currentLevel = value; },
   setHp: value => { hp = value; },
@@ -721,13 +723,17 @@ const platformLifecycleSystem = createPlatformLifecycleSystem({
   enemies,
   spikeTraps,
   platformThickness,
+  platformSpacing,
   scoreEl,
   getScore: () => score,
   setScore: value => { score = value; },
+  getNextPlatformId: () => nextPlatformId,
+  setNextPlatformId: value => { nextPlatformId = value; },
   getPlatformsPassedThisLevel: () => platformsPassedThisLevel,
   setPlatformsPassedThisLevel: value => { platformsPassedThisLevel = value; },
   getLevelTarget,
   setBounceVelocity: value => { bounceVelocity = value; },
+  createPlatform,
   updateLevelUI,
   detachBounceCubesFromPlatform,
   removeGoldBlocksForPlatform: platform => goldBlockSystem.removeGoldBlocksForPlatform(platform),
@@ -1059,11 +1065,11 @@ function disposeEnemy(enemy) {
 }
 
 function spawnExplosion(position, color, count = 12) {
-  spawnExplosionParticles({ scene, particles, particleGeometry, position, color, count });
+  spawnExplosionParticles({ scene, particles: particleSystem, particleGeometry, position, color, count });
 }
 
 function spawnBulletImpact(position) {
-  spawnBulletImpactParticles({ scene, particles, particleGeometry, position, color: colors.bullet });
+  spawnBulletImpactParticles({ scene, particles: particleSystem, particleGeometry, position, color: colors.bullet });
 }
 
 const platformSystem = createPlatformSystem({
@@ -1326,6 +1332,7 @@ const goldBlockSystem = createGoldBlockSystem({
   spawnExplosion,
   spawnBulletImpact,
   spawnBounceCubes,
+  spawnParticle: options => particleSystem.spawnParticle(options),
 });
 
 function spawnBounceCubes(position, count = 3, color = 0xffc107, value = 1) {
