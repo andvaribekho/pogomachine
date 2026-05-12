@@ -98,7 +98,6 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.x = -i * 0.24;
       mesh.scale.y = 0.62;
-      mesh.castShadow = true;
       group.add(mesh);
       segments.push(mesh);
     }
@@ -116,19 +115,16 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     const body = new THREE.Mesh(turtleBodyGeometry, bodyMaterial);
     body.scale.set(1.35, 0.42, 0.9);
     body.position.y = -0.02;
-    body.castShadow = true;
     group.add(body);
 
     const shell = new THREE.Mesh(turtleShellGeometry, shellMaterial);
     shell.scale.set(1.08, 0.58, 0.95);
     shell.position.y = 0.08;
-    shell.castShadow = true;
     group.add(shell);
 
     const head = new THREE.Mesh(wormHeadGeometry, bodyMaterial);
     head.scale.set(0.7, 0.58, 0.7);
     head.position.set(0.33, 0.03, 0);
-    head.castShadow = true;
     group.add(head);
 
     const spikePositions = [
@@ -140,7 +136,6 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     for (const [x, y, z] of spikePositions) {
       const spike = new THREE.Mesh(turtleSpikeGeometry, shellMaterial);
       spike.position.set(x, y, z);
-      spike.castShadow = true;
       group.add(spike);
     }
 
@@ -152,7 +147,6 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     const material = jellyfishMaterial.clone();
     const body = new THREE.Mesh(jellyfishBodyGeometry, material);
     body.scale.set(1, 0.7, 1);
-    body.castShadow = true;
     group.add(body);
     for (let i = 0; i < 5; i += 1) {
       const tentacle = new THREE.Mesh(jellyfishTentacleGeometry, material);
@@ -167,7 +161,6 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     const group = new THREE.Group();
     const material = pufferMaterial.clone();
     const body = new THREE.Mesh(pufferBodyGeometry, material);
-    body.castShadow = true;
     group.add(body);
     for (let i = 0; i < 8; i += 1) {
       const angle = (i / 8) * twoPi;
@@ -188,13 +181,11 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
 
     const stem = new THREE.Mesh(mushroomStemGeometry, stemMaterial);
     stem.position.y = -0.08;
-    stem.castShadow = true;
     group.add(stem);
 
     const cap = new THREE.Mesh(mushroomCapGeometry, capMaterial);
     cap.scale.set(1.25, 0.58, 1.25);
     cap.position.y = 0.11;
-    cap.castShadow = true;
     group.add(cap);
 
     const spotPositions = [
@@ -220,13 +211,11 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     const spikeMaterial = porcupineSpikeMaterial.clone();
     const body = new THREE.Mesh(porcupineBodyGeometry, material);
     body.scale.set(1.25, 0.55, 0.8);
-    body.castShadow = true;
     group.add(body);
 
     const head = new THREE.Mesh(wormHeadGeometry, material);
     head.scale.set(0.72, 0.62, 0.72);
     head.position.set(0.28, 0.03, 0);
-    head.castShadow = true;
     group.add(head);
 
     const spikes = [];
@@ -248,18 +237,16 @@ export function createEnemyMeshFactory({ assets, twoPi }) {
     const body = new THREE.Mesh(acidSnailBodyGeometry, bodyMaterial);
     body.scale.set(1, 0.6, 1.3);
     body.position.set(0.12, 0.05, 0);
-    body.castShadow = true;
     group.add(body);
 
     const shellMaterial = acidSnailShellMaterial.clone();
     const shell = new THREE.Mesh(acidSnailShellGeometry, shellMaterial);
     shell.scale.set(1, 0.7, 1);
     shell.position.set(-0.05, 0.1, 0);
-    shell.castShadow = true;
     group.add(shell);
 
     const eyeGeo = new THREE.SphereGeometry(0.04, 8, 6);
-    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.3 });
+    const eyeMat = new THREE.MeshLambertMaterial({ color: 0x000000 });
     const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
     eyeL.position.set(0.26, 0.1, 0.07);
     group.add(eyeL);

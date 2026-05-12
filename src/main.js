@@ -342,7 +342,7 @@ const collisionSystem = createCollisionSystem({
   breakCrackedTile,
 });
 
-const particleSystem = createParticleSystem({ scene, particles, particleGeometry });
+const particleSystem = createParticleSystem({ scene, particleGeometry });
 
 const acidPuddleSystem = createAcidPuddleSystem({
   scene,
@@ -487,6 +487,7 @@ const optionsPanelSystem = createOptionsPanelSystem({
 
 const shockwaveSystem = createShockwaveSystem({
   scene,
+  world,
   ball,
   enemies,
   shockwaves,
@@ -709,6 +710,7 @@ const lifecycleSystem = createLifecycleSystem({
   createPlatform,
   ensureInitialLowerPlatformYellowWorm,
   ensureInitialLowerPlatformMushroom,
+  ensureInitialFallTestObjects,
   spawnGoldBlocksForLevel,
   spawnPillarSpikesForLevel,
   spawnFloatersForLevel,
@@ -849,6 +851,22 @@ function ensureInitialLowerPlatformYellowWorm() {
 
 function ensureInitialLowerPlatformMushroom() {
   enemySpawnSystem.ensureInitialLowerPlatformMushroom();
+}
+
+function ensureInitialFallTestObjects() {
+  const platform = platforms.find(candidate => candidate.id === 1 && !candidate.final);
+  if (!platform) return;
+
+  const testTiles = platform.tiles
+    .filter(tile => tile.type === 'gray' && !tile.broken && !tile.spikeTrap)
+    .slice(0, 3);
+  if (testTiles.length < 3) return;
+
+  const [crateTile, goldTile, mushroomTile] = testTiles;
+  const crateAngle = (crateTile.start + crateTile.end) / 2;
+  createCrate(platform.group, crateAngle, gameplayLaneRadius);
+  goldBlockSystem.createGoldBlock(platform, goldTile);
+  enemySpawnSystem.createExplosiveMushroom(platform, platform.id * 1000 + 2, mushroomTile);
 }
 
 function maybeSpawnEnemiesForSection(platformData, id) {
@@ -1242,6 +1260,7 @@ const obstacleSystem = createObstacleSystem({
 
 const coinPickupSystem = createCoinPickupSystem({
   camera,
+  world,
   ball,
   ballRadius,
   coinsEl,
@@ -1275,6 +1294,7 @@ const bounceCubeSystem = createBounceCubeSystem({
 
 const crateSystem = createCrateSystem({
   scene,
+  world,
   ball,
   ballRadius,
   platforms,
@@ -1297,6 +1317,7 @@ const crateSystem = createCrateSystem({
 
 const goldBlockSystem = createGoldBlockSystem({
   scene,
+  world,
   ball,
   ballRadius,
   platforms,
@@ -1375,6 +1396,7 @@ function detachBounceCubesFromTile(platform, tile) {
 function detachCratesAndGoldFromTile(platform, tile) {
   crateSystem.detachCratesFromTile(platform, tile);
   goldBlockSystem.detachGoldBlocksFromTile(platform, tile);
+  obstacleSystem.detachCannonsFromTile(platform, tile);
 }
 
 function breakCrate(crateIndex, byBullet = false) {
@@ -1458,8 +1480,8 @@ function killEnemyAt(index, explosionColor) {
   enemyCombatSystem.killEnemyAt(index, explosionColor);
 }
 
-function damageEnemy(enemyIndex) {
-  enemyCombatSystem.damageEnemy(enemyIndex);
+function damageEnemy(enemyIndex, amount) {
+  enemyCombatSystem.damageEnemy(enemyIndex, amount);
 }
 
 function explodePuffer(position) {

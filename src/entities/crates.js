@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { angleInArc } from '../core/utils.js';
-import { platformY } from './platforms.js';
+import { getTileAtWorldPoint, platformY } from './platforms.js';
 
 export function createCrateSystem({
   scene,
+  world,
   ball,
   ballRadius,
   platforms,
@@ -24,6 +25,7 @@ export function createCrateSystem({
   spawnCoinPickupAnimation,
 }) {
   const crateWorldPosition = new THREE.Vector3();
+  const crateLocalPosition = new THREE.Vector3();
 
   function createCrate(platformGroup, angle, radius) {
     const mesh = new THREE.Mesh(crateGeometry, crateMaterial);
@@ -40,13 +42,12 @@ export function createCrateSystem({
   function detachCratesFromTile(platform, tile) {
     for (const crate of crates) {
       if (crate.broken || crate.platformGroup !== platform.group) continue;
-      const localPos = new THREE.Vector3();
-      crate.mesh.getWorldPosition(localPos);
-      const r = Math.hypot(localPos.x, localPos.z);
-      const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
+      crate.mesh.getWorldPosition(crateLocalPosition);
+      platform.group.worldToLocal(crateLocalPosition);
+      const r = Math.hypot(crateLocalPosition.x, crateLocalPosition.z);
+      const a = (Math.atan2(crateLocalPosition.z, crateLocalPosition.x) + twoPi) % twoPi;
       if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
-      crate.platformGroup.remove(crate.mesh);
-      scene.add(crate.mesh);
+      world.attach(crate.mesh);
       crate.platformGroup = null;
       crate.falling = true;
       crate.fallVelocity = 0;
@@ -61,10 +62,10 @@ export function createCrateSystem({
     crate.mesh.getWorldPosition(crateWorldPosition);
     const platGroup = crate.platformGroup;
     spawnExplosion(crateWorldPosition, colors.crate, 12);
-    platGroup.remove(crate.mesh);
+    crate.mesh.removeFromParent();
     crates.splice(crateIndex, 1);
 
-    if (byBullet) {
+    if (byBullet && platGroup) {
       spawnCoinPickup(crateWorldPosition, platGroup);
     } else {
       setCoins(getCoins() + 5);
@@ -122,8 +123,12 @@ export function createCrateSystem({
       for (const platform of platforms) {
         const platformTop = platformY(platform) + platformThickness / 2 + 0.22;
         if (previousY >= platformTop && crate.mesh.position.y <= platformTop) {
+          crate.mesh.getWorldPosition(crateWorldPosition);
+          crateWorldPosition.y = platformTop;
+          if (!getTileAtWorldPoint(platform, crateWorldPosition)) continue;
+
           crate.platformGroup = platform.group;
-          platform.group.add(crate.mesh);
+          platform.group.attach(crate.mesh);
           crate.mesh.position.y = platformThickness / 2 + 0.22;
           crate.falling = false;
           crate.fallVelocity = 0;

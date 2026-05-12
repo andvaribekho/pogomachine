@@ -246,7 +246,6 @@ export function createPlatformSystem({
         Math.sin(angle) * gameplayLaneRadius
       );
       spike.rotation.y = -angle + Math.PI / 4;
-      spike.castShadow = true;
       group.add(spike);
       spikes.push({ mesh: spike, angle, colliderPosition: new THREE.Vector3() });
     }
@@ -278,7 +277,7 @@ export function createPlatformSystem({
     ctx.textBaseline = 'middle';
     ctx.fillText('Shop', 64, 32);
     const signTexture = new THREE.CanvasTexture(signCanvas);
-    const signMat = new THREE.MeshStandardMaterial({ map: signTexture, roughness: 0.6 });
+    const signMat = new THREE.MeshLambertMaterial({ map: signTexture });
     const signGeo = new THREE.PlaneGeometry(0.7, 0.35);
     const signMesh = new THREE.Mesh(signGeo, signMat);
     signMesh.position.set(
@@ -299,7 +298,7 @@ export function createPlatformSystem({
 
     for (const [type, tilesOfType] of tilesByType) {
       const geo = getArcGeometry(arcSize, platformInnerRadius, platformOuterRadius, platformThickness);
-      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide });
+      const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
       const im = new THREE.InstancedMesh(geo, mat, tilesOfType.length);
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       im.receiveShadow = true;
@@ -356,6 +355,12 @@ export function createPlatformSystem({
         typeMesh: null, instanceIndex: -1,
         crackLine: null, flashTimer: 0, broken: false, hitCount: 0, spikeTrap: false,
       });
+    }
+
+    if (!isFinal && id === 1) {
+      for (const tile of tiles.filter(tile => tile.type === 'blue').slice(0, 3)) {
+        tile.type = 'gray';
+      }
     }
 
     let shopTile = null;

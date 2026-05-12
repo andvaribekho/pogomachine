@@ -27,7 +27,7 @@ export function createBounceCubeSystem({
     if (bounceCubes.length > 0) return;
 
     for (let i = 0; i < bounceCubePoolSize; i += 1) {
-      const material = new THREE.MeshStandardMaterial({ color: 0xffc107, roughness: 0.5 });
+      const material = new THREE.MeshLambertMaterial({ color: 0xffc107 });
       const mesh = new THREE.Mesh(bounceCubeGeometry, material);
       mesh.visible = false;
       scene.add(mesh);

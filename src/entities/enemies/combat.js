@@ -108,7 +108,7 @@ export function createEnemyCombatSystem({
     }
   }
 
-  function damageEnemyImpl(enemyIndex) {
+  function damageEnemyImpl(enemyIndex, amount = 1) {
     const enemy = enemies[enemyIndex];
     if (enemy.type === 'acidSnail') return;
     if (enemy.type === 'explosiveMushroom') {
@@ -120,26 +120,21 @@ export function createEnemyCombatSystem({
       return;
     }
 
-    enemy.hp -= 1;
+    enemy.hp -= amount;
     enemy.flashTimer = 0.18;
     if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'pillarWorm') {
       for (const segment of enemy.segments) {
-        segment.material.emissive.setHex(0xffeb3b);
-        segment.material.emissiveIntensity = 0.8;
+        segment.material.color.setHex(0xffeb3b);
       }
     } else if (enemy.type === 'turtle') {
       for (const material of enemy.materials) {
-        material.emissive.setHex(0xffeb3b);
-        material.emissiveIntensity = 0.8;
+        material.color.setHex(0xffeb3b);
       }
     } else if (enemy.type === 'porcupine') {
-      enemy.material.emissive.setHex(0xffeb3b);
-      enemy.material.emissiveIntensity = 0.8;
-      enemy.spikeMaterial.emissive.setHex(0xffeb3b);
-      enemy.spikeMaterial.emissiveIntensity = 0.8;
+      enemy.material.color.setHex(0xffeb3b);
+      enemy.spikeMaterial.color.setHex(0xffeb3b);
     } else {
-      enemy.material.emissive.setHex(0xff0000);
-      enemy.material.emissiveIntensity = 0.9;
+      enemy.material.color.setHex(0xff0000);
     }
 
     if (enemy.hp <= 0) {
@@ -161,10 +156,8 @@ export function createEnemyCombatSystem({
         if (enemy.type === 'acidSnail') {
           spawnBulletImpact(bullet.mesh.position);
           enemy.flashTimer = 0.2;
-          enemy.bodyMaterial.emissive.setHex(0x2196f3);
-          enemy.bodyMaterial.emissiveIntensity = 0.9;
-          enemy.shellMaterial.emissive.setHex(0x2196f3);
-          enemy.shellMaterial.emissiveIntensity = 0.9;
+          enemy.bodyMaterial.color.setHex(0x2196f3);
+          enemy.shellMaterial.color.setHex(0x2196f3);
           playMetallicBlipSound();
           return true;
         }

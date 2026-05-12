@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 export function createShockwaveSystem({
   scene,
+  world,
   ball,
   enemies,
   shockwaves,
@@ -13,13 +14,17 @@ export function createShockwaveSystem({
   damageEnemy,
   playPufferExplosionSound,
 }) {
+  const shockwaveLocalPosition = new THREE.Vector3();
+
   function explodePuffer(position) {
     playPufferExplosionSound();
     const material = shockwaveMaterial.clone();
     const mesh = new THREE.Mesh(shockwaveGeometry, material);
-    mesh.position.copy(position);
+    shockwaveLocalPosition.copy(position);
+    world.worldToLocal(shockwaveLocalPosition);
+    mesh.position.copy(shockwaveLocalPosition);
     mesh.scale.setScalar(0.1);
-    scene.add(mesh);
+    world.add(mesh);
     shockwaves.push({ mesh, material, position: position.clone(), radius: 0.1, maxRadius: 2.2, life: 0.55, maxLife: 0.55, damagedEnemies: new Set(), damagedPlayer: false });
   }
 
@@ -32,6 +37,7 @@ export function createShockwaveSystem({
       shockwave.radius = THREE.MathUtils.lerp(0.1, shockwave.maxRadius, progress);
       shockwave.mesh.scale.setScalar(shockwave.radius);
       shockwave.material.opacity = Math.max(0, 0.42 * (1 - progress));
+      shockwave.mesh.getWorldPosition(shockwave.position);
       if (!shockwave.damagedPlayer && ball.position.distanceToSquared(shockwave.position) <= (shockwave.radius + getPlayerHitboxRadius()) ** 2) {
         shockwave.damagedPlayer = true;
         applyDamage();

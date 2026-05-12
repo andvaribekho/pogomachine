@@ -80,20 +80,7 @@ export function createAcidPuddleSystem({
               worldPos.z + (Math.random() - 0.5) * 0.15
             );
             const velocity = new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.8 + Math.random() * 0.5, (Math.random() - 0.5) * 0.3);
-            if (spawnParticle) {
-              spawnParticle({ position: particlePosition, color: colors.acid, velocity, life: 0.4 + Math.random() * 0.3 });
-            } else {
-              const material = new THREE.MeshBasicMaterial({ color: colors.acid, transparent: true, opacity: 1 });
-              const mesh = new THREE.Mesh(particleGeometry, material);
-              mesh.position.copy(particlePosition);
-              scene.add(mesh);
-              particles.push({
-                mesh,
-                material,
-                velocity,
-                life: 0.4 + Math.random() * 0.3,
-              });
-            }
+            spawnParticle({ position: particlePosition, color: colors.acid, velocity, life: 0.4 + Math.random() * 0.3 });
           }
         }
       }
@@ -104,17 +91,20 @@ export function createAcidPuddleSystem({
         puddle.mesh.position.y += puddle.fallVelocity * dt;
 
         const dropletRadiusSq = 0.1 * 0.1;
+        if (!puddle.damagedEnemies) puddle.damagedEnemies = new Set();
         for (let e = enemies.length - 1; e >= 0; e -= 1) {
           const enemy = enemies[e];
+          if (puddle.damagedEnemies.has(enemy)) continue;
           const enemyPos = getEnemyWorldPosition(enemy);
           const dx = puddle.mesh.position.x - enemyPos.x;
           const dy = puddle.mesh.position.y - enemyPos.y;
           const dz = puddle.mesh.position.z - enemyPos.z;
           if (dx * dx + dy * dy + dz * dz <= dropletRadiusSq + enemy.collisionRadius * enemy.collisionRadius) {
+            puddle.damagedEnemies.add(enemy);
             if (enemy.type === 'bat' || enemy.type === 'jellyfish') {
               removeEnemyAt(e, colors.acid);
             } else if (enemy.type !== 'acidSnail') {
-              damageEnemy(e);
+              damageEnemy(e, 3);
             }
           }
         }
@@ -148,6 +138,7 @@ export function createAcidPuddleSystem({
               puddle.falling = false;
               puddle.fallVelocity = 0;
               puddle.isDroplet = false;
+              puddle.damagedEnemies = null;
               puddle.baseSize = size;
               break;
             }
@@ -208,6 +199,7 @@ export function createAcidPuddleSystem({
         puddle.falling = true;
         puddle.fallVelocity = 0;
         puddle.isDroplet = true;
+        puddle.damagedEnemies = new Set();
         puddle.platformData = null;
       }
     }

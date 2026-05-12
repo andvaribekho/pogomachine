@@ -94,6 +94,7 @@ export function createLifecycleSystem({
   createPlatform,
   ensureInitialLowerPlatformYellowWorm,
   ensureInitialLowerPlatformMushroom,
+  ensureInitialFallTestObjects,
   spawnGoldBlocksForLevel,
   spawnPillarSpikesForLevel,
   spawnFloatersForLevel,
@@ -219,7 +220,7 @@ export function createLifecycleSystem({
 
     generatePlatformsThrough(getPlatformsPassedThisLevel() + rollingPlatformAheadCount);
     ensureInitialLowerPlatformYellowWorm();
-    ensureInitialLowerPlatformMushroom();
+    ensureInitialFallTestObjects();
     spawnGoldBlocksForLevel();
     spawnPillarSpikesForLevel();
     spawnFloatersForLevel();

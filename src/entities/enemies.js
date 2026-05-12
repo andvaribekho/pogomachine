@@ -3,5 +3,5 @@ export function isWormTile(tile) {
 }
 
 export function isGroundEnemy(enemy) {
-  return enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail';
+  return enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail' || enemy.type === 'explosiveMushroom';
 }

@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { angleInArc } from '../core/utils.js';
-import { platformY } from './platforms.js';
+import { getTileAtWorldPoint, platformY } from './platforms.js';
 
 export function createGoldBlockSystem({
   scene,
+  world,
   ball,
   ballRadius,
   platforms,
@@ -41,6 +42,9 @@ export function createGoldBlockSystem({
   spawnBounceCubes,
   spawnParticle,
 }) {
+  const goldBlockWorldPosition = new THREE.Vector3();
+  const goldBlockLocalPosition = new THREE.Vector3();
+
   function createGoldBlock(platformData, tile) {
     const angle = tile.start + (tile.end - tile.start) * (0.25 + Math.random() * 0.5);
     const position = new THREE.Vector3(
@@ -53,7 +57,6 @@ export function createGoldBlockSystem({
     const mesh = new THREE.Mesh(goldBlockGeometry.clone(), goldBlockMaterial.clone());
     mesh.position.copy(position);
     mesh.rotation.y = angle + Math.PI * 0.25;
-    mesh.castShadow = true;
     platformData.group.add(mesh);
     goldBlocks.push({ mesh, platformData, hp: goldBlockHitsToBreak, flashTimer: 0, sparkleTimer: Math.random() * 0.12, broken: false, falling: false, fallVelocity: 0 });
     return true;
@@ -118,13 +121,12 @@ export function createGoldBlockSystem({
   function detachGoldBlocksFromTile(platform, tile) {
     for (const gb of goldBlocks) {
       if (gb.broken || gb.platformData !== platform) continue;
-      const localPos = new THREE.Vector3();
-      gb.mesh.getWorldPosition(localPos);
-      const r = Math.hypot(localPos.x, localPos.z);
-      const a = (Math.atan2(localPos.z, localPos.x) + twoPi) % twoPi;
+      gb.mesh.getWorldPosition(goldBlockLocalPosition);
+      platform.group.worldToLocal(goldBlockLocalPosition);
+      const r = Math.hypot(goldBlockLocalPosition.x, goldBlockLocalPosition.z);
+      const a = (Math.atan2(goldBlockLocalPosition.z, goldBlockLocalPosition.x) + twoPi) % twoPi;
       if (r < platformInnerRadius || r > platformOuterRadius || !angleInArc(a, tile.start, tile.end)) continue;
-      gb.platformData.group.remove(gb.mesh);
-      scene.add(gb.mesh);
+      world.attach(gb.mesh);
       gb.platformData = null;
       gb.falling = true;
       gb.fallVelocity = 0;
@@ -205,23 +207,7 @@ export function createGoldBlockSystem({
     goldBlock.mesh.localToWorld(position);
 
     const velocity = new THREE.Vector3((Math.random() - 0.5) * 0.12, 0.65 + Math.random() * 0.45, (Math.random() - 0.5) * 0.12);
-    if (spawnParticle) {
-      spawnParticle({ position, color: colors.gold, velocity, gravity: 0, life: 2, maxLife: 2, opacity: 0.82, scale: 0.45 + Math.random() * 0.35, depthWrite: false });
-    } else {
-      const material = new THREE.MeshBasicMaterial({ color: colors.gold, transparent: true, opacity: 0.82, depthWrite: false });
-      const mesh = new THREE.Mesh(particleGeometry, material);
-      mesh.position.copy(position);
-      mesh.scale.setScalar(0.45 + Math.random() * 0.35);
-      scene.add(mesh);
-      particles.push({
-        mesh,
-        material,
-        velocity,
-        gravity: 0,
-        life: 2,
-        maxLife: 2,
-      });
-    }
+    spawnParticle({ position, color: colors.gold, velocity, gravity: 0, life: 2, maxLife: 2, opacity: 0.82, scale: 0.45 + Math.random() * 0.35 });
   }
 
   function checkBulletGoldBlockHit(bullet, previousY) {
@@ -258,12 +244,8 @@ export function createGoldBlockSystem({
       if (goldBlock.flashTimer > 0) {
         goldBlock.flashTimer = Math.max(0, goldBlock.flashTimer - dt);
         goldBlock.mesh.material.color.setHex(colors.goldFlash);
-        goldBlock.mesh.material.emissive.setHex(colors.goldFlash);
-        goldBlock.mesh.material.emissiveIntensity = 0.55;
       } else {
         goldBlock.mesh.material.color.setHex(colors.gold);
-        goldBlock.mesh.material.emissive.setHex(0x8a5a00);
-        goldBlock.mesh.material.emissiveIntensity = 0.25;
       }
     }
   }
@@ -277,8 +259,12 @@ export function createGoldBlockSystem({
       for (const platform of platforms) {
         const platformTop = platformY(platform) + platformThickness / 2 + goldBlockHalfSize;
         if (previousY >= platformTop && gb.mesh.position.y <= platformTop) {
+          gb.mesh.getWorldPosition(goldBlockWorldPosition);
+          goldBlockWorldPosition.y = platformTop;
+          if (!getTileAtWorldPoint(platform, goldBlockWorldPosition)) continue;
+
           gb.platformData = platform;
-          platform.group.add(gb.mesh);
+          platform.group.attach(gb.mesh);
           gb.mesh.position.y = platformThickness / 2 + goldBlockHalfSize;
           gb.falling = false;
           gb.fallVelocity = 0;

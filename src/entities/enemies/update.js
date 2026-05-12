@@ -59,6 +59,16 @@ export function createEnemyUpdateSystem({
       return;
     }
 
+    if (enemy.type === 'explosiveMushroom') {
+      enemy.group.position.set(
+        Math.cos(enemy.localAngle) * enemy.orbitRadius,
+        platformThickness / 2 + 0.24,
+        Math.sin(enemy.localAngle) * enemy.orbitRadius
+      );
+      enemy.group.rotation.y = -enemy.localAngle + Math.PI / 2;
+      return;
+    }
+
     if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm' || enemy.type === 'turtle' || enemy.type === 'porcupine' || enemy.type === 'acidSnail') {
       const localPosition = enemyLocalPosition.set(
         Math.cos(enemy.localAngle) * enemy.orbitRadius,
@@ -70,8 +80,6 @@ export function createEnemyUpdateSystem({
       enemy.group.rotation.y = world.rotation.y - enemy.localAngle + Math.PI / 2;
       return;
     }
-
-    if (enemy.type === 'explosiveMushroom') return;
 
     enemy.group.position.set(
       Math.cos(enemy.angle) * enemy.orbitRadius,
@@ -98,6 +106,7 @@ export function createEnemyUpdateSystem({
 
   function startGroundEnemyFall(enemy) {
     if (enemy.falling) return;
+    if (enemy.type === 'explosiveMushroom') world.attach(enemy.group);
     enemy.falling = true;
     enemy.fallVelocity = -0.2;
     enemy.platformData = null;
@@ -114,7 +123,11 @@ export function createEnemyUpdateSystem({
       const footNow = enemy.group.position.y - groundEnemyFootOffset;
       if (footBefore < platformTop || footNow > platformTop || enemy.fallVelocity >= 0) continue;
 
-      enemyFallLocalPosition.copy(enemy.group.position);
+      if (enemy.type === 'explosiveMushroom') {
+        enemy.group.getWorldPosition(enemyFallLocalPosition);
+      } else {
+        enemyFallLocalPosition.copy(enemy.group.position);
+      }
       enemyFallLocalPosition.y = platformTop + groundEnemyFootOffset;
       const tile = getTileAtWorldPoint(platform, enemyFallLocalPosition);
       if (!tile || !isWormTile(tile)) continue;
@@ -127,6 +140,7 @@ export function createEnemyUpdateSystem({
       enemy.y = platformTop + groundEnemyFootOffset;
       enemy.falling = false;
       enemy.fallVelocity = 0;
+      if (enemy.type === 'explosiveMushroom') platform.group.attach(enemy.group);
       positionEnemy(enemy);
       return;
     }
@@ -149,6 +163,8 @@ export function createEnemyUpdateSystem({
       } else if (isGroundEnemy(enemy)) {
         if (enemy.falling) {
           updateGroundEnemyFall(enemy, dt);
+        } else if (enemy.type === 'explosiveMushroom') {
+          // Fixed ground hazard: it only reacts to stomps, bullets, and support loss.
         } else if (enemy.type === 'porcupine') {
           enemy.stateTimer -= dt;
           if (enemy.state === 'walk' && enemy.stateTimer <= 0) {
@@ -165,7 +181,7 @@ export function createEnemyUpdateSystem({
             for (const spike of enemy.spikes) spike.visible = false;
           }
         }
-        if (!enemy.falling) {
+        if (!enemy.falling && enemy.type !== 'explosiveMushroom') {
           const nextAngle = enemy.localAngle + enemy.speed * enemy.direction * dt;
           if (isWormBodySupported(enemy.platformData, nextAngle, enemy.orbitRadius, enemy.segmentSpacing)) {
             enemy.localAngle = (nextAngle + twoPi) % twoPi;
@@ -183,8 +199,6 @@ export function createEnemyUpdateSystem({
             }
           }
         }
-      } else if (enemy.type === 'explosiveMushroom') {
-        // Fixed ground hazard: it only reacts to stomps and bullets.
       } else if (enemy.twistB || getFlyingModeB()) {
         enemy.angle = (enemy.angle + enemy.speed * enemy.direction * dt + twoPi) % twoPi;
       } else {
@@ -219,10 +233,8 @@ export function createEnemyUpdateSystem({
         if (enemy.type === 'acidSnail') {
           setAcidStompImmunity(0.6);
           enemy.flashTimer = 0.25;
-          enemy.bodyMaterial.emissive.setHex(0xff0000);
-          enemy.bodyMaterial.emissiveIntensity = 0.9;
-          enemy.shellMaterial.emissive.setHex(0xff0000);
-          enemy.shellMaterial.emissiveIntensity = 0.9;
+          enemy.bodyMaterial.color.setHex(0xff0000);
+          enemy.shellMaterial.color.setHex(0xff0000);
           if (enemy.shellIntact) {
             enemy.shellIntact = false;
             enemy.shell.material = acidSnailCrackedShellMaterial.clone();
@@ -286,7 +298,7 @@ export function createEnemyUpdateSystem({
       if (enemy.flashTimer > 0) {
         enemy.flashTimer -= dt;
       } else {
-        for (const segment of enemy.segments) segment.material.emissiveIntensity = 0;
+        for (const segment of enemy.segments) segment.material.color.setHex(segment.material.userData.baseColor);
       }
     } else if (enemy.type === 'turtle') {
       const wiggle = Math.sin(performance.now() * 0.01 + enemy.id) * 0.035;
@@ -294,21 +306,21 @@ export function createEnemyUpdateSystem({
       if (enemy.flashTimer > 0) {
         enemy.flashTimer -= dt;
       } else {
-        for (const material of enemy.materials) material.emissiveIntensity = material === enemy.materials[1] ? 0.18 : 0;
+        for (const material of enemy.materials) material.color.setHex(material.userData.baseColor);
       }
     } else if (enemy.type === 'porcupine') {
       if (enemy.flashTimer > 0) {
         enemy.flashTimer -= dt;
       } else {
-        enemy.material.emissiveIntensity = 0;
-        enemy.spikeMaterial.emissiveIntensity = 0;
+        enemy.material.color.setHex(enemy.material.userData.baseColor);
+        enemy.spikeMaterial.color.setHex(enemy.spikeMaterial.userData.baseColor);
       }
     } else if (enemy.type === 'acidSnail') {
       if (enemy.flashTimer > 0) {
         enemy.flashTimer -= dt;
       } else {
-        enemy.bodyMaterial.emissiveIntensity = 0;
-        enemy.shellMaterial.emissiveIntensity = 0;
+        enemy.bodyMaterial.color.setHex(enemy.bodyMaterial.userData.baseColor);
+        enemy.shellMaterial.color.setHex(enemy.shellMaterial.userData.baseColor);
       }
     } else if (enemy.type === 'explosiveMushroom') {
       enemy.group.scale.setScalar(1 + Math.sin(getScaledTime() * 3 + enemy.id) * 0.025);
@@ -318,7 +330,7 @@ export function createEnemyUpdateSystem({
       if (enemy.flashTimer > 0) {
         enemy.flashTimer -= dt;
       } else {
-        enemy.material.emissiveIntensity = 0;
+        enemy.material.color.setHex(enemy.material.userData.baseColor);
       }
     }
   }

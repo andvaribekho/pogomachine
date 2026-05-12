@@ -77,17 +77,16 @@ export function createObstacleSystem({
   const cannonWorldPosition = new THREE.Vector3();
   const cannonMouthWorldPosition = new THREE.Vector3();
   const cannonLosPoint = new THREE.Vector3();
+  const cannonLocalPosition = new THREE.Vector3();
 
   function createCannonMesh() {
     const group = new THREE.Group();
     const base = new THREE.Mesh(cannonBaseGeometry.clone(), cannonMaterial.clone());
     base.position.y = 0.11;
-    base.castShadow = true;
     group.add(base);
 
     const mouth = new THREE.Mesh(cannonMouthGeometry.clone(), cannonMaterial.clone());
     mouth.position.y = 0.34;
-    mouth.castShadow = true;
     group.add(mouth);
 
     const ring = new THREE.Mesh(cannonRingGeometry.clone(), cannonWarningMaterial.clone());
@@ -135,6 +134,8 @@ export function createObstacleSystem({
       damagedThisShot: false,
       hp: 5,
       flashTimer: 0,
+      falling: false,
+      fallVelocity: 0,
     });
   }
 
@@ -209,6 +210,7 @@ export function createObstacleSystem({
   }
 
   function cannonHasLineOfSight(cannon) {
+    if (!cannon.platformData) return false;
     const mouth = getCannonWorldMouth(cannon);
     if (mouth.y >= ball.position.y - ballRadius) return false;
 
@@ -227,9 +229,55 @@ export function createObstacleSystem({
     return true;
   }
 
+  function detachCannonsFromTile(platform, tile) {
+    for (const cannon of cannons) {
+      if (cannon.falling || cannon.platformData !== platform) continue;
+      cannon.group.getWorldPosition(cannonLocalPosition);
+      platform.group.worldToLocal(cannonLocalPosition);
+      const radius = Math.hypot(cannonLocalPosition.x, cannonLocalPosition.z);
+      const angle = (Math.atan2(cannonLocalPosition.z, cannonLocalPosition.x) + twoPi) % twoPi;
+      if (radius > platformOuterRadius || !angleInArc(angle, tile.start, tile.end)) continue;
+
+      world.attach(cannon.group);
+      cannon.platformData = null;
+      cannon.falling = true;
+      cannon.fallVelocity = 0;
+      cannon.charge = 0;
+      cannon.laserTimer = 0;
+      cannon.ring.visible = false;
+      cannon.laser.visible = false;
+    }
+  }
+
+  function updateFallingCannon(cannon, dt) {
+    const previousY = cannon.group.position.y;
+    cannon.fallVelocity = (cannon.fallVelocity ?? 0) - 14 * dt;
+    cannon.group.position.y += cannon.fallVelocity * dt;
+
+    for (const platform of platforms) {
+      const platformTop = platformY(platform) + platformThickness / 2 + 0.02;
+      if (previousY < platformTop || cannon.group.position.y > platformTop) continue;
+
+      cannon.group.getWorldPosition(cannonWorldPosition);
+      cannonWorldPosition.y = platformTop;
+      if (!isSolidLineOfSightTile(getTileAtWorldPoint(platform, cannonWorldPosition))) continue;
+
+      cannon.platformData = platform;
+      platform.group.attach(cannon.group);
+      cannon.group.position.y = platformThickness / 2 + 0.02;
+      cannon.falling = false;
+      cannon.fallVelocity = 0;
+      break;
+    }
+  }
+
   function updateCannons(dt) {
     for (let i = cannons.length - 1; i >= 0; i -= 1) {
       const cannon = cannons[i];
+      if (cannon.falling) {
+        updateFallingCannon(cannon, dt);
+        continue;
+      }
       const contact = getBallCannonContact(cannon);
       if (contact === 'bottom' && getBallVelocity() < 0 && ball.position.y > getCannonWorldPosition(cannon).y) {
         destroyCannon(i);
@@ -244,15 +292,13 @@ export function createObstacleSystem({
 
       const hasLos = cannonHasLineOfSight(cannon);
 
-      cannon.base.material.emissive?.setHex(0x000000);
-      cannon.base.material.emissiveIntensity = 0;
+      cannon.base.material.color.setHex(cannon.base.material.userData.baseColor);
       cannon.ring.visible = false;
       cannon.laser.visible = false;
 
       if (cannon.flashTimer > 0) {
         cannon.flashTimer = Math.max(0, cannon.flashTimer - dt);
-        cannon.base.material.emissive?.setHex(0xff9800);
-        cannon.base.material.emissiveIntensity = 0.8;
+        cannon.base.material.color.setHex(0xff9800);
       }
 
       if (cannon.cooldown > 0) {
@@ -280,8 +326,7 @@ export function createObstacleSystem({
       if (cannon.charge === 0) playCannonActivateSound();
       cannon.charge += dt;
       const chargeProgress = Math.min(1, cannon.charge / getCannonChargeTime());
-      cannon.base.material.emissive?.setHex(0xff0000);
-      cannon.base.material.emissiveIntensity = 0.35 + Math.sin(performance.now() * 0.02) * 0.25;
+      cannon.base.material.color.setHex(0xff0000);
       cannon.ring.visible = true;
       cannon.ring.scale.setScalar(Math.max(0.25, 1 - chargeProgress * 0.75));
 
@@ -304,7 +349,6 @@ export function createObstacleSystem({
     const mesh = new THREE.Mesh(pillarSpikeGeometry.clone(), pillarSpikeMaterial.clone());
     mesh.rotation.z = -Math.PI / 2;
     mesh.position.x = ledgeRadialLength / 2;
-    mesh.castShadow = true;
     group.add(mesh);
 
     world.add(group);
@@ -334,7 +378,6 @@ export function createObstacleSystem({
       y,
       Math.sin(angle) * gameplayLaneRadius
     );
-    mesh.castShadow = true;
     world.add(mesh);
     floaters.push({ mesh, angle, y, used: false });
   }
@@ -399,7 +442,6 @@ export function createObstacleSystem({
 
   function createSawBlade(y, angle, speedOffset = 0) {
     const mesh = new THREE.Mesh(sawBladeGeometry, sawBladeMaterial.clone());
-    mesh.castShadow = true;
     const sawBlade = {
       group: mesh,
       y,
@@ -578,6 +620,7 @@ export function createObstacleSystem({
     getAngularDistance,
     getCannonWorldMouth,
     cannonHasLineOfSight,
+    detachCannonsFromTile,
     updateCannons,
   };
 }

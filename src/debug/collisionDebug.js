@@ -22,7 +22,7 @@ export function createCollisionDebug({ enabled, scene, world, ball, getWorldRota
   const panel = document.createElement('pre');
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.09, 12, 8),
-    new THREE.MeshBasicMaterial({ color: 0xff00ff, depthTest: false })
+    new THREE.MeshLambertMaterial({ color: 0xff00ff, depthTest: false })
   );
   const ring = new THREE.Group();
   const collisionPoint = new THREE.Vector3();
