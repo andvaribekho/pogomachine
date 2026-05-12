@@ -16,6 +16,7 @@ export function createShootingSystem(ctx) {
   const shotgunTangent = new THREE.Vector3();
   const shotgunVelocity = new THREE.Vector3();
   const defaultBulletVelocity = new THREE.Vector3(0, -ctx.bulletSpeed, 0);
+  const bulletRotationAxis = new THREE.Vector3(0, 1, 0);
   const bulletPool = [];
 
   function currentFireInterval() {
@@ -43,7 +44,7 @@ export function createShootingSystem(ctx) {
     mesh.visible = false;
     mesh.renderOrder = 5;
     ctx.scene.add(mesh);
-    return { mesh, life: 0, velocity: new THREE.Vector3(), shotgunShotId: 0, hitEnemies: new Set(), active: false };
+    return { mesh, life: 0, velocity: new THREE.Vector3(), shotgunShotId: 0, hitEnemies: new Set(), active: false, balasB: false, lastWorldRotation: 0 };
   }
 
   function getPooledBullet() {
@@ -69,6 +70,8 @@ export function createShootingSystem(ctx) {
     bullet.life = ctx.bulletLifetime;
     bullet.velocity.copy(velocity);
     bullet.shotgunShotId = shotId;
+    bullet.balasB = ctx.getBalasBMode?.() === true;
+    bullet.lastWorldRotation = ctx.getWorldRotation?.() ?? 0;
     bullet.hitEnemies.clear();
     mesh.position.copy(ctx.ball.position);
     mesh.position.y -= ctx.ballRadius + 0.06;
@@ -177,8 +180,20 @@ export function createShootingSystem(ctx) {
       const bullet = ctx.bullets[i];
       const previousY = bullet.mesh.position.y;
       bullet.life -= dt;
+      if (bullet.balasB) {
+        const worldRotation = ctx.getWorldRotation();
+        const deltaRotation = worldRotation - bullet.lastWorldRotation;
+        bullet.mesh.position.applyAxisAngle(bulletRotationAxis, deltaRotation);
+        bullet.velocity.applyAxisAngle(bulletRotationAxis, deltaRotation);
+        bullet.lastWorldRotation = worldRotation;
+      }
       bullet.mesh.position.addScaledVector(bullet.velocity, dt);
       bullet.mesh.scale.setScalar(Math.max(0.45, bullet.life / ctx.bulletLifetime));
+
+      if (ctx.checkBulletBossHit?.(bullet)) {
+        removeBullet(i);
+        continue;
+      }
 
       if (ctx.checkBulletEnemyHit(bullet) && !ctx.isPiercingBulletsUnlocked()) {
         removeBullet(i);

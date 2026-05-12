@@ -326,7 +326,8 @@ export function createPlatformSystem({
     const isFinal = options.final === true;
     const difficulty = Math.min(id / 18, 1);
     const segmentCount = isFinal ? 16 : Math.floor(8 + difficulty * 5);
-    const gapCount = isFinal ? 0 : Math.min(4, 2 + Math.floor(difficulty * 3));
+    const bossSupportFloaterOnly = options.bossSupportFloaterOnly === true;
+    const gapCount = isFinal || bossSupportFloaterOnly ? 0 : Math.min(4, 2 + Math.floor(difficulty * 3));
     const redChance = isFinal ? 0 : 0.08 + difficulty * 0.17;
     const grayChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
     const crackedChance = isFinal ? 0 : 0.1 + difficulty * 0.08;
@@ -343,13 +344,15 @@ export function createPlatformSystem({
 
       const start = i * arcSize;
       const end = (i + 1) * arcSize;
-      let type = isFinal ? 'finish' : Math.random() < redChance && id > 1 ? 'red' : 'blue';
+      let type = isFinal ? 'finish' : bossSupportFloaterOnly ? 'gapOnly' : Math.random() < redChance && id > 1 ? 'red' : 'blue';
       if (type === 'blue' && Math.random() < grayChance && id > 2) {
         type = 'gray';
       }
       if (type === 'blue' && Math.random() < crackedChance && id > 2) {
         type = 'crackedBlue';
       }
+      if (type === 'gapOnly') continue;
+
       tiles.push({
         index: i, start, end, type,
         typeMesh: null, instanceIndex: -1,
@@ -408,8 +411,8 @@ export function createPlatformSystem({
     platforms.push(platData);
     registerPlatformInBand(platData);
 
-    if (!isFinal) maybeSpawnEnemiesForSection(platData, id);
-    if (!isFinal) maybeSpawnCannon(platData, id);
+    if (!isFinal && !bossSupportFloaterOnly) maybeSpawnEnemiesForSection(platData, id);
+    if (!isFinal && !bossSupportFloaterOnly) maybeSpawnCannon(platData, id);
   }
 
   return {

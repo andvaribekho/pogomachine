@@ -120,6 +120,8 @@ export function createOptionsPanelSystem({
     refs.twistBOnButton.classList.toggle('active', getState.twistBMode());
     refs.flyingModeBOffButton.classList.toggle('active', !getState.flyingModeB());
     refs.flyingModeBOnButton.classList.toggle('active', getState.flyingModeB());
+    refs.balasBOffButton.classList.toggle('active', !getState.balasBMode());
+    refs.balasBOnButton.classList.toggle('active', getState.balasBMode());
   }
 
   return {

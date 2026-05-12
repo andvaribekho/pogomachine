@@ -29,7 +29,7 @@ import {
   playReloadSound, playBatDeathSound, playCannonActivateSound,
   playCannonFireSound, playRewardSound, playCoinCubeCollectSound,
   playGlassBreakSound, playPufferExplosionSound, playMetallicBlipSound,
-  playAcidBurnSound, startInvulnerabilityMusic, updateInvulnerabilityMusic,
+  playAcidBurnSound, playBossDeathSound, playBossSpawnSound, startInvulnerabilityMusic, updateInvulnerabilityMusic,
   stopInvulnerabilityMusic,
 } from './systems/audio.js';
 import {
@@ -81,6 +81,7 @@ import { createGoldBlockSystem } from './entities/goldBlocks.js';
 import { createObstacleSystem } from './entities/obstacles.js';
 import { createAcidPuddleSystem } from './entities/acidPuddles.js';
 import { createShockwaveSystem } from './entities/shockwaves.js';
+import { createLevelBossSystem } from './entities/levelBoss.js';
 import { getDomRefs } from './ui/dom.js';
 import { createComboSystem } from './ui/combo.js';
 import { createCollisionDebug } from './debug/collisionDebug.js';
@@ -88,7 +89,7 @@ import { createCollisionDebug } from './debug/collisionDebug.js';
 const { scene, camera, renderer } = createSceneBundle();
 const {
   scoreEl, heartsEl, coinsEl, levelLabelEl, progressFillEl, progressLabelEl,
-  gameOverEl, finalScoreEl, ammoMagazineEl, weaponIndicatorEl, pauseButton,
+  bossHealthEl, bossHealthFillEl, gameOverEl, finalScoreEl, ammoMagazineEl, weaponIndicatorEl, pauseButton,
   steamDeckButton, pausePanelEl, closePanelButton, impulseInput, fireIntervalInput,
   shotgunSpreadInput, shotgunIntervalInput, maxAmmoInput, gravityInput,
   terminalVelocityInput, stompImpulseInput, hitboxScaleInput, cannonChargeInput,
@@ -100,7 +101,7 @@ const {
   impulseCButton, impulseBResetInput, impulseBShotgunInput, impulseBResetLabel,
   impulseBShotgunLabel, impulseCFactorLabel, impulseCFactorInput, controlAButton,
   controlBButton, twistBOffButton, twistBOnButton, flyingModeBOffButton,
-  flyingModeBOnButton, shopPanelEl, shopCoinsEl, shopBulletBtn, shopHpBtn,
+  flyingModeBOnButton, balasBOffButton, balasBOnButton, shopPanelEl, shopCoinsEl, shopBulletBtn, shopHpBtn,
   shopArmorBtn, shopInvulnBtn, shopPiercingBtn, shopVampiricBtn,
   shopComboShieldBtn, closeShopButton, leaderboardPanelEl, leaderboardNameSection,
   leaderboardNameInput, leaderboardSubmitBtn, leaderboardScoreLabel,
@@ -136,6 +137,7 @@ let impulseCfactor = 0.93;
 let controlMode = 'A';
 let twistBMode = true;
 let flyingModeB = true;
+let balasBMode = false;
 let timeScale = 1;
 let damageSlowdownTimer = 0;
 let grayscaleAmount = 0;
@@ -340,9 +342,36 @@ const collisionSystem = createCollisionSystem({
   getShopUsed: () => shopUsed,
   openShop,
   breakCrackedTile,
+  isFinalPlatformBlocked: () => levelBossSystem.isFinalPlatformBlocked(),
 });
 
 const particleSystem = createParticleSystem({ scene, particleGeometry });
+
+const levelBossSystem = createLevelBossSystem({
+  world,
+  ball,
+  platforms,
+  platformThickness,
+  platformOuterRadius,
+  gameplayLaneRadius,
+  twoPi,
+  getCurrentLevel: () => currentLevel,
+  getLevelTarget,
+  getPlatformsPassedThisLevel: () => platformsPassedThisLevel,
+  getPlayerHitboxRadius,
+  getBounceVelocity: () => bounceVelocity,
+  setBallVelocity: value => { ballVelocity = value; },
+  applyDamage,
+  bossHealthEl,
+  bossHealthFillEl,
+  spawnParticle: options => particleSystem.spawnParticle(options),
+  spawnExplosion,
+  playBatDeathSound,
+  playBossDeathSound,
+  playBossSpawnSound,
+  playBounceSound,
+  colors,
+});
 
 const acidPuddleSystem = createAcidPuddleSystem({
   scene,
@@ -423,6 +452,8 @@ const optionsPanelSystem = createOptionsPanelSystem({
     twistBOnButton,
     flyingModeBOffButton,
     flyingModeBOnButton,
+    balasBOffButton,
+    balasBOnButton,
   },
   defaults: {
     defaultBulletImpulse,
@@ -461,6 +492,7 @@ const optionsPanelSystem = createOptionsPanelSystem({
     impulseMode: () => impulseMode,
     twistBMode: () => twistBMode,
     flyingModeB: () => flyingModeB,
+    balasBMode: () => balasBMode,
     fireCooldown: () => fireCooldown,
   },
   setState: {
@@ -694,6 +726,7 @@ const lifecycleSystem = createLifecycleSystem({
   clearParticles: () => particleSystem.clearParticles(),
   clearFloatingTexts: () => floatingTextSystem.clearFloatingTexts(),
   clearShockwaves: () => shockwaveSystem.clearShockwaves(),
+  clearLevelBoss: () => levelBossSystem.clearBoss(),
   clearCoinPickups,
   clearAcidPuddles,
   deactivateAllBounceCubes,
@@ -708,6 +741,7 @@ const lifecycleSystem = createLifecycleSystem({
   updatePersistentUI,
   updateLevelCompleteUI,
   createPlatform,
+  createBossFloaterRing: y => obstacleSystem.createBossFloaterRing(y),
   ensureInitialLowerPlatformYellowWorm,
   ensureInitialLowerPlatformMushroom,
   ensureInitialFallTestObjects,
@@ -736,6 +770,7 @@ const platformLifecycleSystem = createPlatformLifecycleSystem({
   getLevelTarget,
   setBounceVelocity: value => { bounceVelocity = value; },
   createPlatform,
+  createBossFloaterRing: y => obstacleSystem.createBossFloaterRing(y),
   updateLevelUI,
   detachBounceCubesFromPlatform,
   removeGoldBlocksForPlatform: platform => goldBlockSystem.removeGoldBlocksForPlatform(platform),
@@ -1026,6 +1061,8 @@ const shooting = createShootingSystem({
   getFireCooldown: () => fireCooldown,
   setFireCooldown: value => { fireCooldown = value; },
   getSelectedWeapon: () => selectedWeapon,
+  getWorldRotation: () => world.rotation.y,
+  getBalasBMode: () => balasBMode,
   getFireInterval: () => fireInterval,
   getShotgunFireInterval: () => shotgunFireInterval,
   getShotgunSpreadAngle: () => shotgunSpreadAngle,
@@ -1047,6 +1084,7 @@ const shooting = createShootingSystem({
   isPaused: () => isPaused,
   isSteamDeckModeActive: () => steamDeckMode.isActive(),
   isPiercingBulletsUnlocked: () => piercingBulletsUnlocked,
+  checkBulletBossHit,
   checkBulletEnemyHit,
   checkBulletCrateHit,
   checkBulletGoldBlockHit,
@@ -1240,6 +1278,7 @@ const obstacleSystem = createObstacleSystem({
   getWorldRotation: () => world.rotation.y,
   getBallVelocity: () => ballVelocity,
   setBallVelocity: value => { ballVelocity = value; },
+  getBounceVelocity: () => bounceVelocity,
   getStompImpulse: () => stompImpulse,
   getCannonChargeTime: () => cannonChargeTime,
   getCannonCooldown: () => cannonCooldown,
@@ -1512,6 +1551,10 @@ function checkBulletEnemyHit(bullet) {
   return enemyCombatSystem.checkBulletEnemyHit(bullet);
 }
 
+function checkBulletBossHit(bullet) {
+  return levelBossSystem.checkBulletBossHit(bullet);
+}
+
 function checkBulletGoldBlockHit(bullet, previousY) {
   return goldBlockSystem.checkBulletGoldBlockHit(bullet, previousY);
 }
@@ -1703,7 +1746,7 @@ setupGameplayInputWiring({
   refs: {
     pauseButton, closePanelButton, extraButton, closeExtraButton, impulseAButton, impulseBButton, impulseCButton,
     impulseCFactorInput, impulseBResetInput, impulseBShotgunInput, controlAButton, controlBButton,
-    twistBOffButton, twistBOnButton, flyingModeBOffButton, flyingModeBOnButton, shopBulletBtn, shopHpBtn,
+    twistBOffButton, twistBOnButton, flyingModeBOffButton, flyingModeBOnButton, balasBOffButton, balasBOnButton, shopBulletBtn, shopHpBtn,
     shopArmorBtn, shopInvulnBtn, shopPiercingBtn, shopVampiricBtn, shopComboShieldBtn, closeShopButton,
     shopPanelEl, levelCompleteEl, rewardHpButton, rewardAmmoButton, buyInvulnerabilityButton, buyShieldButton,
     nextLevelButton, impulseInput, leaderboardSubmitBtn, leaderboardNameInput, leaderboardCloseBtn,
@@ -1723,6 +1766,8 @@ setupGameplayInputWiring({
       impulseAButton.classList.toggle('active', impulseMode === 'A');
       impulseBButton.classList.toggle('active', impulseMode === 'B');
       impulseCButton.classList.toggle('active', impulseMode === 'C');
+      balasBOffButton.classList.toggle('active', !balasBMode);
+      balasBOnButton.classList.toggle('active', balasBMode);
     },
     closeExtra: () => {
       extraPanelEl.hidden = true;
@@ -1786,6 +1831,8 @@ setupGameplayInputWiring({
     enableTwistB: () => { twistBMode = true; twistBOnButton.classList.add('active'); twistBOffButton.classList.remove('active'); },
     disableFlyingModeB: () => { flyingModeB = false; flyingModeBOffButton.classList.add('active'); flyingModeBOnButton.classList.remove('active'); },
     enableFlyingModeB: () => { flyingModeB = true; flyingModeBOnButton.classList.add('active'); flyingModeBOffButton.classList.remove('active'); },
+    disableBalasB: () => { balasBMode = false; balasBOffButton.classList.add('active'); balasBOnButton.classList.remove('active'); },
+    enableBalasB: () => { balasBMode = true; balasBOnButton.classList.add('active'); balasBOffButton.classList.remove('active'); },
     buyShopBullet,
     buyShopHp,
     buyShopArmor,
@@ -1904,6 +1951,7 @@ const gameLoop = createGameLoop({
   updateFloaters,
   updateAcidPuddles,
   updateShockwaves,
+  updateLevelBoss: dt => levelBossSystem.updateBoss(dt),
   updateCannons,
   updateGoldBlocks,
   updateFallingCratesAndGold,

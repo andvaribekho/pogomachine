@@ -19,12 +19,16 @@
       </div>
       <div id="hint">Drag to rotate, release to shoot</div>
     </div>
+    <div id="boss-health" hidden>
+      <div id="boss-health-label">BOSS</div>
+      <div id="boss-health-track"><div id="boss-health-fill"></div></div>
+    </div>
     <div id="ammo-ui" aria-label="Ammo">
       <div class="ammo-label">AMMO</div>
       <div id="weapon-indicator">Weapon: Machinegun</div>
       <div id="ammo-magazine"></div>
     </div>
-    <div id="version-label">v1.64-falltest</div>
+    <div id="version-label">v1.71 bosstest 2</div>
     <button id="pause-button" type="button" aria-label="Open options">Options</button>
     <button id="steam-deck-button" type="button">Steam Deck</button>
     <div id="pause-panel" hidden>
@@ -140,6 +144,13 @@
           <div class="button-group">
             <button id="flying-mode-b-off-btn" type="button" class="mode-btn">Off</button>
             <button id="flying-mode-b-on-btn" type="button" class="mode-btn active">On</button>
+          </div>
+        </label>
+        <label>
+          balasB
+          <div class="button-group">
+            <button id="balas-b-off-btn" type="button" class="mode-btn active">Off</button>
+            <button id="balas-b-on-btn" type="button" class="mode-btn">On</button>
           </div>
         </label>
         <button id="close-extra-button" type="button">Close</button>

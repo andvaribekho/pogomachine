@@ -146,6 +146,56 @@ export function playBatDeathSound() {
   }
 }
 
+export function playBossDeathSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const growl = ctx.createOscillator();
+    const grind = ctx.createOscillator();
+    const gain = ctx.createGain();
+    growl.type = 'sawtooth';
+    grind.type = 'square';
+    growl.frequency.setValueAtTime(135, now);
+    growl.frequency.exponentialRampToValueAtTime(48, now + 2.8);
+    grind.frequency.setValueAtTime(72, now);
+    grind.frequency.exponentialRampToValueAtTime(34, now + 3);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.36, now + 0.18);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 3);
+    growl.connect(gain);
+    grind.connect(gain);
+    gain.connect(ctx.destination);
+    growl.start(now);
+    grind.start(now);
+    growl.stop(now + 3);
+    grind.stop(now + 3);
+  } catch (_) {
+    /* silent */
+  }
+}
+
+export function playBossSpawnSound() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const roar = ctx.createOscillator();
+    const gain = ctx.createGain();
+    roar.type = 'sawtooth';
+    roar.frequency.setValueAtTime(95, now);
+    roar.frequency.exponentialRampToValueAtTime(210, now + 0.2);
+    roar.frequency.exponentialRampToValueAtTime(70, now + 0.85);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.32, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    roar.connect(gain);
+    gain.connect(ctx.destination);
+    roar.start(now);
+    roar.stop(now + 0.9);
+  } catch (_) {
+    /* silent */
+  }
+}
+
 export function playCannonActivateSound() {
   try {
     const ctx = ensureAudioCtx();

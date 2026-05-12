@@ -40,6 +40,8 @@ export function setupGameplayInputWiring({
   refs.twistBOnButton.addEventListener('click', handlers.enableTwistB);
   refs.flyingModeBOffButton.addEventListener('click', handlers.disableFlyingModeB);
   refs.flyingModeBOnButton.addEventListener('click', handlers.enableFlyingModeB);
+  refs.balasBOffButton.addEventListener('click', handlers.disableBalasB);
+  refs.balasBOnButton.addEventListener('click', handlers.enableBalasB);
 
   refs.shopBulletBtn.addEventListener('click', handlers.buyShopBullet);
   refs.shopHpBtn.addEventListener('click', handlers.buyShopHp);

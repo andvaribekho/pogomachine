@@ -78,6 +78,7 @@ export function createLifecycleSystem({
   clearParticles,
   clearFloatingTexts,
   clearShockwaves,
+  clearLevelBoss,
   clearCoinPickups,
   clearAcidPuddles,
   deactivateAllBounceCubes,
@@ -92,6 +93,7 @@ export function createLifecycleSystem({
   updatePersistentUI,
   updateLevelCompleteUI,
   createPlatform,
+  createBossFloaterRing,
   ensureInitialLowerPlatformYellowWorm,
   ensureInitialLowerPlatformMushroom,
   ensureInitialFallTestObjects,
@@ -108,7 +110,9 @@ export function createLifecycleSystem({
     const cappedMaxId = Math.min(target, maxPlatformId);
     while (getNextPlatformId() <= cappedMaxId) {
       const nextPlatformId = getNextPlatformId();
-      createPlatform(-nextPlatformId * platformSpacing, nextPlatformId, { final: nextPlatformId === target });
+      const isBossSupport = target === 20 && nextPlatformId === target - 1;
+      createPlatform(-nextPlatformId * platformSpacing, nextPlatformId, { final: nextPlatformId === target, bossSupportFloaterOnly: isBossSupport });
+      if (isBossSupport) createBossFloaterRing(-nextPlatformId * platformSpacing);
       setNextPlatformId(nextPlatformId + 1);
     }
   }
@@ -120,6 +124,7 @@ export function createLifecycleSystem({
     clearParticles();
     clearFloatingTexts();
     clearShockwaves();
+    clearLevelBoss();
   }
 
   function clearTower() {

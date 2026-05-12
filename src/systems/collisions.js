@@ -28,6 +28,7 @@ export function createCollisionSystem({
   getShopUsed,
   openShop,
   breakCrackedTile,
+  isFinalPlatformBlocked = () => false,
 }) {
   const bulletImpactPoint = new THREE.Vector3();
   const ballLocal = new THREE.Vector3();
@@ -270,6 +271,13 @@ export function createCollisionSystem({
 
       if (contact.tile.type === 'finish') {
         ball.position.y = platformTop + ballRadius;
+        if (isFinalPlatformBlocked()) {
+          setBallVelocity(getBounceVelocity());
+          resetCombo();
+          playBounceSound();
+          contact.tile.flashTimer = 0.3;
+          return;
+        }
         setBallVelocity(0);
         completeLevel();
         return;

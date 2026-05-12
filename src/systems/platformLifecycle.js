@@ -18,6 +18,7 @@ export function createPlatformLifecycleSystem({
   getLevelTarget,
   setBounceVelocity,
   createPlatform,
+  createBossFloaterRing,
   updateLevelUI,
   detachBounceCubesFromPlatform,
   removeGoldBlocksForPlatform,
@@ -32,7 +33,9 @@ export function createPlatformLifecycleSystem({
     const cappedMaxId = Math.min(target, maxPlatformId);
     while (getNextPlatformId() <= cappedMaxId) {
       const nextPlatformId = getNextPlatformId();
-      createPlatform(-nextPlatformId * platformSpacing, nextPlatformId, { final: nextPlatformId === target });
+      const isBossSupport = nextPlatformId === target - 1;
+      createPlatform(-nextPlatformId * platformSpacing, nextPlatformId, { final: nextPlatformId === target, bossSupportFloaterOnly: isBossSupport });
+      if (isBossSupport) createBossFloaterRing(-nextPlatformId * platformSpacing);
       setNextPlatformId(nextPlatformId + 1);
     }
   }

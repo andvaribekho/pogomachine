@@ -20,6 +20,7 @@ export function createObstacleSystem({
   getWorldRotation,
   getBallVelocity,
   setBallVelocity,
+  getBounceVelocity,
   getStompImpulse,
   getCannonChargeTime,
   getCannonCooldown,
@@ -78,6 +79,9 @@ export function createObstacleSystem({
   const cannonMouthWorldPosition = new THREE.Vector3();
   const cannonLosPoint = new THREE.Vector3();
   const cannonLocalPosition = new THREE.Vector3();
+  const blueFloaterMaterial = floaterMaterial.clone();
+  blueFloaterMaterial.color.setHex(0x2196f3);
+  blueFloaterMaterial.userData.baseColor = 0x2196f3;
 
   function createCannonMesh() {
     const group = new THREE.Group();
@@ -371,24 +375,34 @@ export function createObstacleSystem({
     }
   }
 
-  function createFloater(y, angle) {
-    const mesh = new THREE.Mesh(floaterDiscGeometry, floaterMaterial.clone());
+  function createFloater(y, angle, options = {}) {
+    const mesh = new THREE.Mesh(floaterDiscGeometry, options.blue ? blueFloaterMaterial.clone() : floaterMaterial.clone());
     mesh.position.set(
       Math.cos(angle) * gameplayLaneRadius,
       y,
       Math.sin(angle) * gameplayLaneRadius
     );
     world.add(mesh);
-    floaters.push({ mesh, angle, y, used: false });
+    floaters.push({ mesh, angle, y, used: false, blue: options.blue === true, persistent: options.persistent === true });
+  }
+
+  function createBossFloaterRing(y) {
+    for (let i = 0; i < 8; i += 1) {
+      createFloater(y, (i / 8) * twoPi, { blue: true, persistent: true });
+    }
   }
 
   function spawnFloatersForLevel() {
     const target = getLevelTarget();
     const intervalCount = Math.max(1, target - 1);
+    const bossSupportInterval = getCurrentLevel() === 1 ? target - 1 : -1;
+    const maxRandomFloaters = intervalCount - (bossSupportInterval >= 1 && bossSupportInterval <= intervalCount ? 1 : 0);
     const usedIntervals = new Set();
 
-    while (usedIntervals.size < Math.min(24, intervalCount)) {
-      usedIntervals.add(1 + Math.floor(Math.random() * intervalCount));
+    while (usedIntervals.size < Math.min(24, maxRandomFloaters)) {
+      const interval = 1 + Math.floor(Math.random() * intervalCount);
+      if (interval === bossSupportInterval) continue;
+      usedIntervals.add(interval);
     }
 
     for (const interval of usedIntervals) {
@@ -417,12 +431,14 @@ export function createObstacleSystem({
         const dz = ball.position.z - worldPos.z;
         const radialDist = Math.hypot(dx, dz);
         if (radialDist <= ballRadius) {
-          floater.used = true;
-          spawnExplosion(worldPos.clone(), 0x9e9e9e, 8);
-          world.remove(floater.mesh);
-          floater.mesh.geometry.dispose();
-          floaters.splice(i, 1);
-          setBallVelocity(Math.max(getBallVelocity(), getStompImpulse()));
+          if (!floater.persistent) {
+            floater.used = true;
+            spawnExplosion(worldPos.clone(), 0x9e9e9e, 8);
+            world.remove(floater.mesh);
+            floater.mesh.geometry.dispose();
+            floaters.splice(i, 1);
+          }
+          setBallVelocity(floater.blue ? getBounceVelocity() : Math.max(getBallVelocity(), getStompImpulse()));
           if (reloadAmmo()) {
             spawnFloatingText('Reload', ball.position);
             playReloadSound();
@@ -432,7 +448,7 @@ export function createObstacleSystem({
         }
       }
 
-      if (worldPos.y > ball.position.y + 15) {
+      if (!floater.persistent && worldPos.y > ball.position.y + 15) {
         world.remove(floater.mesh);
         floater.mesh.geometry.dispose();
         floaters.splice(i, 1);
@@ -597,6 +613,7 @@ export function createObstacleSystem({
     createPillarSpike,
     spawnPillarSpikesForLevel,
     createFloater,
+    createBossFloaterRing,
     spawnFloatersForLevel,
     updateFloaters,
     createSawBlade,

@@ -37,6 +37,7 @@ export function createGameLoop({
   updateFloaters,
   updateAcidPuddles,
   updateShockwaves,
+  updateLevelBoss,
   updateCannons,
   updateGoldBlocks,
   updateFallingCratesAndGold,
@@ -81,6 +82,7 @@ export function createGameLoop({
       checkBallCrateHit(previousY);
       checkBallGoldBlockStomp(previousY);
       handlePlatformUndersideCollision(previousY);
+      updateLevelBoss(dt);
       handlePlatformCollision(previousY);
       updateSpikeTraps(dt);
       updatePillarSpikes(dt);
