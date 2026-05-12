@@ -26,7 +26,7 @@ export function createCrateSystem({
   const crateWorldPosition = new THREE.Vector3();
 
   function createCrate(platformGroup, angle, radius) {
-    const mesh = new THREE.Mesh(crateGeometry.clone(), crateMaterial.clone());
+    const mesh = new THREE.Mesh(crateGeometry, crateMaterial);
     mesh.position.set(
       Math.cos(angle) * radius,
       platformThickness / 2 + 0.22,
@@ -62,8 +62,6 @@ export function createCrateSystem({
     const platGroup = crate.platformGroup;
     spawnExplosion(crateWorldPosition, colors.crate, 12);
     platGroup.remove(crate.mesh);
-    crate.mesh.geometry.dispose();
-    crate.mesh.material.dispose();
     crates.splice(crateIndex, 1);
 
     if (byBullet) {

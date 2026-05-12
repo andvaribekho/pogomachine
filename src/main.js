@@ -1065,11 +1065,11 @@ function disposeEnemy(enemy) {
 }
 
 function spawnExplosion(position, color, count = 12) {
-  spawnExplosionParticles({ scene, particles: particleSystem, particleGeometry, position, color, count });
+  spawnExplosionParticles({ particles: particleSystem, position, color, count });
 }
 
 function spawnBulletImpact(position) {
-  spawnBulletImpactParticles({ scene, particles: particleSystem, particleGeometry, position, color: colors.bullet });
+  spawnBulletImpactParticles({ particles: particleSystem, position, color: colors.bullet });
 }
 
 const platformSystem = createPlatformSystem({

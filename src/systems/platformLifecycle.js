@@ -71,7 +71,11 @@ export function createPlatformLifecycleSystem({
         unregisterPlatformFromBand(platform);
         world.remove(platform.group);
         platform.group.traverse((child) => {
-          if (child.geometry) child.geometry.dispose();
+          if (child.isInstancedMesh) {
+            if (typeof child.dispose === 'function') child.dispose();
+          } else if (child.geometry && !child.geometry.userData?.shared) {
+            child.geometry.dispose();
+          }
           if (child.material) child.material.dispose();
         });
         platforms.splice(i, 1);

@@ -76,5 +76,5 @@ export function isBlueTile(tile) {
 }
 
 export function isFlashablePlatformTile(tile) {
-  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop' || tile.type === 'gray';
+  return tile.type === 'blue' || tile.type === 'crackedBlue' || tile.type === 'shop' || tile.type === 'gray' || tile.type === 'red';
 }

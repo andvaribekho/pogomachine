@@ -34,11 +34,14 @@ export function createEnemyCombatSystem({
 }) {
   function disposeEnemy(enemy) {
     const materials = new Set();
+    const geometries = new Set();
     enemy.group.traverse((child) => {
       if (child.material) materials.add(child.material);
+      if (child.geometry) geometries.add(child.geometry);
     });
     if (enemy.group.parent) enemy.group.parent.remove(enemy.group);
     materials.forEach((material) => material.dispose());
+    geometries.forEach((geometry) => geometry.dispose());
   }
 
   function splitYellowWorm(enemy) {
@@ -156,7 +159,7 @@ export function createEnemyCombatSystem({
         if (bullet.shotgunShotId) enemy.lastShotgunHitId = bullet.shotgunShotId;
         if (bullet.hitEnemies) bullet.hitEnemies.add(enemy);
         if (enemy.type === 'acidSnail') {
-          spawnBulletImpact(bullet.mesh.position.clone());
+          spawnBulletImpact(bullet.mesh.position);
           enemy.flashTimer = 0.2;
           enemy.bodyMaterial.emissive.setHex(0x2196f3);
           enemy.bodyMaterial.emissiveIntensity = 0.9;

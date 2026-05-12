@@ -8,6 +8,7 @@ export const colors = {
   grayParticle: 0x9ea7ad,
   finish: 0x2ecc71,
   red: 0xf44336,
+  redFlash: 0xffcdd2,
   pillar: 0x243447,
   ball: 0xffd54f,
   bullet: 0xfff176,

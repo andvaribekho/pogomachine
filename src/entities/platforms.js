@@ -11,6 +11,26 @@ const tilePointLocal = new THREE.Vector3();
 const flashA = new THREE.Color();
 const flashB = new THREE.Color();
 
+const arcGeometryCache = new Map();
+function getArcGeometry(arcSize, innerR, outerR, thickness) {
+  const key = `${arcSize}|${innerR}|${outerR}|${thickness}`;
+  let geo = arcGeometryCache.get(key);
+  if (!geo) {
+    geo = makeArcGeometry(innerR, outerR, 0, arcSize, thickness);
+    geo.userData.shared = true;
+    arcGeometryCache.set(key, geo);
+  }
+  return geo;
+}
+
+const zeroScaleMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+const tileTmpMatrix = new THREE.Matrix4();
+const tileTmpQuat = new THREE.Quaternion();
+const tileTmpPos = new THREE.Vector3();
+const tileTmpScale = new THREE.Vector3(1, 1, 1);
+const tileUpAxis = new THREE.Vector3(0, 1, 0);
+const tileTmpColor = new THREE.Color();
+
 export function platformY(platform) {
   return platform.group.position.y;
 }
@@ -108,9 +128,10 @@ export function makeGrayCrackLines(startAngle, endAngle, stage) {
 }
 
 export function disposeTile(tile) {
-  if (tile.mesh.parent) tile.mesh.parent.remove(tile.mesh);
-  tile.mesh.geometry.dispose();
-  tile.material.dispose();
+  if (tile.typeMesh) {
+    tile.typeMesh.setMatrixAt(tile.instanceIndex, zeroScaleMatrix);
+    tile.typeMesh.instanceMatrix.needsUpdate = true;
+  }
 
   if (tile.crackLine) {
     if (tile.crackLine.parent) tile.crackLine.parent.remove(tile.crackLine);
@@ -148,22 +169,27 @@ export function getTileAtWorldPoint(platform, worldPoint) {
 }
 
 export function updateTileFlashes(platforms, dt) {
+  const dirtyMeshes = new Set();
   for (const platform of platforms) {
     for (const tile of platform.tiles) {
-      if (!isFlashablePlatformTile(tile) || tile.broken) continue;
+      if (tile.broken || tile.flashTimer <= 0) continue;
+      if (!isFlashablePlatformTile(tile)) continue;
 
       const baseColor = getPlatformTileColor(tile.type);
-      const flashColor = tile.type === 'gray' ? colors.grayFlash : colors.blueFlash;
-      if (tile.flashTimer > 0) {
-        tile.flashTimer = Math.max(0, tile.flashTimer - dt);
-        const t = tile.flashTimer / 0.3;
-        flashA.setHex(baseColor);
-        flashB.setHex(flashColor);
-        tile.mesh.material.color.copy(flashA.lerp(flashB, t));
-      } else {
-        tile.mesh.material.color.setHex(baseColor);
-      }
+      const flashColor = tile.type === 'gray' ? colors.grayFlash
+        : tile.type === 'red' ? colors.redFlash
+        : colors.blueFlash;
+      tile.flashTimer = Math.max(0, tile.flashTimer - dt);
+      const t = tile.flashTimer / 0.3;
+      flashA.setHex(baseColor);
+      flashB.setHex(flashColor);
+      flashA.lerp(flashB, t);
+      tile.typeMesh.setColorAt(tile.instanceIndex, flashA);
+      dirtyMeshes.add(tile.typeMesh);
     }
+  }
+  for (const im of dirtyMeshes) {
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
   }
 }
 
@@ -264,6 +290,36 @@ export function createPlatformSystem({
     return signMesh;
   }
 
+  function buildTileInstancedMeshes(group, tiles, arcSize) {
+    const tilesByType = new Map();
+    for (const tile of tiles) {
+      if (!tilesByType.has(tile.type)) tilesByType.set(tile.type, []);
+      tilesByType.get(tile.type).push(tile);
+    }
+
+    for (const [type, tilesOfType] of tilesByType) {
+      const geo = getArcGeometry(arcSize, platformInnerRadius, platformOuterRadius, platformThickness);
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide });
+      const im = new THREE.InstancedMesh(geo, mat, tilesOfType.length);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.receiveShadow = true;
+
+      tileTmpColor.setHex(getPlatformTileColor(type));
+
+      tilesOfType.forEach((tile, i) => {
+        tileTmpQuat.setFromAxisAngle(tileUpAxis, -tile.start);
+        tileTmpMatrix.compose(tileTmpPos, tileTmpQuat, tileTmpScale);
+        im.setMatrixAt(i, tileTmpMatrix);
+        im.setColorAt(i, tileTmpColor);
+        tile.instanceIndex = i;
+        tile.typeMesh = im;
+      });
+
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      group.add(im);
+    }
+  }
+
   function createPlatform(y, id, options = {}) {
     const group = new THREE.Group();
     group.position.y = y;
@@ -295,16 +351,26 @@ export function createPlatformSystem({
       if (type === 'blue' && Math.random() < crackedChance && id > 2) {
         type = 'crackedBlue';
       }
-      const geometry = makeArcGeometry(platformInnerRadius, platformOuterRadius, start, end, platformThickness);
-      const tileColor = getPlatformTileColor(type);
-      const material = new THREE.MeshStandardMaterial({ color: tileColor, roughness: 0.6, side: THREE.DoubleSide });
-      const mesh = new THREE.Mesh(geometry, material);
-      const crackLine = type === 'crackedBlue' ? makeCrackLine(start, end) : null;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      if (crackLine) group.add(crackLine);
-      const tile = { index: i, start, end, type, mesh, material, crackLine, flashTimer: 0, broken: false, hitCount: 0, spikeTrap: false };
-      tiles.push(tile);
+      tiles.push({
+        index: i, start, end, type,
+        typeMesh: null, instanceIndex: -1,
+        crackLine: null, flashTimer: 0, broken: false, hitCount: 0, spikeTrap: false,
+      });
+    }
+
+    let shopTile = null;
+    if (!isFinal && !getShopTilePlat() && id === 3) {
+      shopTile = tiles.find(t => t.type === 'blue');
+      if (shopTile) shopTile.type = 'shop';
+    }
+
+    buildTileInstancedMeshes(group, tiles, arcSize);
+
+    for (const tile of tiles) {
+      if (tile.type === 'crackedBlue') {
+        tile.crackLine = makeCrackLine(tile.start, tile.end);
+        group.add(tile.crackLine);
+      }
     }
 
     maybeCreateSpikeTrap(group, tiles, id, isFinal);
@@ -325,17 +391,11 @@ export function createPlatformSystem({
       }
     }
 
-    if (!isFinal && !getShopTilePlat() && id === 3) {
-      const shopTile = tiles.find(t => t.type === 'blue' && !t.broken && !t.spikeTrap);
-      if (shopTile) {
-        shopTile.type = 'shop';
-        shopTile.material.color.setHex(colors.shop);
-        setShopTilePlat({ id, group });
-        setShopTileRef(shopTile);
-
-        const shopAngle = (shopTile.start + shopTile.end) / 2;
-        group.add(createShopSign(shopAngle));
-      }
+    if (shopTile) {
+      setShopTilePlat({ id, group });
+      setShopTileRef(shopTile);
+      const shopAngle = (shopTile.start + shopTile.end) / 2;
+      group.add(createShopSign(shopAngle));
     }
 
     world.add(group);

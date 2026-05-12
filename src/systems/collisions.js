@@ -36,11 +36,24 @@ export function createCollisionSystem({
   const ballTopCollider = new THREE.Vector3();
   const ballLeftCollider = new THREE.Vector3();
   const ballRightCollider = new THREE.Vector3();
-  const enemySegmentWorldPosition = new THREE.Vector3();
   const acidSnailBodyWorldPosition = new THREE.Vector3();
   const acidSnailShellWorldPosition = new THREE.Vector3();
   const acidSnailHeadWorldPosition = new THREE.Vector3();
   const platformUndersidePoint = new THREE.Vector3();
+
+  const segmentPositionCache = [];
+  function getSegmentSlot(i) {
+    let v = segmentPositionCache[i];
+    if (!v) {
+      v = new THREE.Vector3();
+      segmentPositionCache[i] = v;
+    }
+    return v;
+  }
+
+  const bulletPlatformBuffer = [];
+  const undersidePlatformBuffer = [];
+  const topsidePlatformBuffer = [];
 
   function getBallColliderPositions() {
     const offset = getPlayerHitboxRadius();
@@ -78,18 +91,22 @@ export function createCollisionSystem({
     }
 
     if (enemy.type === 'worm' || enemy.type === 'yellowWorm' || enemy.type === 'miniYellowWorm') {
-      const stompRadius = enemy.collisionRadius + ballRadius * 0.75;
-      const contactRadius = enemy.collisionRadius + hitboxRadius;
-      const sideContactRadius = enemy.collisionRadius + sideHitboxRadius;
-      for (const segment of enemy.segments) {
-        segment.getWorldPosition(enemySegmentWorldPosition);
-        if (colliders.bottom.distanceToSquared(enemySegmentWorldPosition) <= stompRadius * stompRadius) return 'bottom';
+      const stompRadiusSq = (enemy.collisionRadius + ballRadius * 0.75) ** 2;
+      const contactRadiusSq = (enemy.collisionRadius + hitboxRadius) ** 2;
+      const sideContactRadiusSq = (enemy.collisionRadius + sideHitboxRadius) ** 2;
+      const segments = enemy.segments;
+      const segCount = segments.length;
+      for (let i = 0; i < segCount; i += 1) {
+        segments[i].getWorldPosition(getSegmentSlot(i));
       }
-      for (const segment of enemy.segments) {
-        segment.getWorldPosition(enemySegmentWorldPosition);
-        if (colliders.top.distanceToSquared(enemySegmentWorldPosition) <= contactRadius * contactRadius) return 'top';
-        if (colliders.left.distanceToSquared(enemySegmentWorldPosition) <= sideContactRadius * sideContactRadius) return 'left';
-        if (colliders.right.distanceToSquared(enemySegmentWorldPosition) <= sideContactRadius * sideContactRadius) return 'right';
+      for (let i = 0; i < segCount; i += 1) {
+        if (colliders.bottom.distanceToSquared(segmentPositionCache[i]) <= stompRadiusSq) return 'bottom';
+      }
+      for (let i = 0; i < segCount; i += 1) {
+        const pos = segmentPositionCache[i];
+        if (colliders.top.distanceToSquared(pos) <= contactRadiusSq) return 'top';
+        if (colliders.left.distanceToSquared(pos) <= sideContactRadiusSq) return 'left';
+        if (colliders.right.distanceToSquared(pos) <= sideContactRadiusSq) return 'right';
       }
       return null;
     }
@@ -145,7 +162,8 @@ export function createCollisionSystem({
 
   function checkBulletPlatformHit(bullet, previousY) {
     const currentY = bullet.mesh.position.y;
-    const crossedPlatforms = [];
+    const crossedPlatforms = bulletPlatformBuffer;
+    crossedPlatforms.length = 0;
 
     forEachPlatformNearY(Math.min(previousY, currentY), Math.max(previousY, currentY), (platform) => {
       const platformTop = platformY(platform) + platformThickness / 2;
@@ -193,7 +211,8 @@ export function createCollisionSystem({
 
     const topBefore = previousY + ballRadius;
     const topNow = ball.position.y + ballRadius;
-    const crossedPlatforms = [];
+    const crossedPlatforms = undersidePlatformBuffer;
+    crossedPlatforms.length = 0;
 
     forEachPlatformNearY(Math.min(topBefore, topNow), Math.max(topBefore, topNow), (platform) => {
       const platformBottom = platformY(platform) - platformThickness / 2;
@@ -220,7 +239,8 @@ export function createCollisionSystem({
 
     const bottomNow = ball.position.y - ballRadius;
     const bottomBefore = previousY - ballRadius;
-    const crossedPlatforms = [];
+    const crossedPlatforms = topsidePlatformBuffer;
+    crossedPlatforms.length = 0;
 
     forEachPlatformNearY(Math.min(bottomBefore, bottomNow), Math.max(bottomBefore, bottomNow), (platform) => {
       const platformTop = platformY(platform) + platformThickness / 2;
@@ -240,8 +260,7 @@ export function createCollisionSystem({
       if (!contact.tile) continue;
 
       if (contact.tile.type === 'red') {
-        contact.tile.material.emissive.setHex(0x7a0000);
-        contact.tile.material.emissiveIntensity = 0.45;
+        contact.tile.flashTimer = 0.3;
         applyDamage();
         if (!getIsGameOver()) resetCombo();
         ball.position.y = platformTop + ballRadius;
